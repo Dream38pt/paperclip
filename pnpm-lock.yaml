@@ -561,6 +561,9 @@ importers:
       '@paperclipai/db':
         specifier: workspace:*
         version: link:../packages/db
+      '@paperclipai/execution-target-kubernetes':
+        specifier: workspace:*
+        version: link:../packages/adapters/kubernetes-execution
       '@paperclipai/plugin-sdk':
         specifier: workspace:*
         version: link:../packages/plugins/sdk
