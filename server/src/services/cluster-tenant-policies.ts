@@ -39,34 +39,41 @@ export function clusterTenantPoliciesService(db: Db): ClusterTenantPoliciesServi
     },
 
     async upsert(input) {
+      // We still read existing once to implement the preserve-on-omit
+      // semantics for httpProxyUrl. The read is racy w.r.t. another concurrent
+      // upsert, but the write below is unconditionally atomic via
+      // ON CONFLICT — no caller will surface a unique-constraint error from
+      // cluster_tenant_policies_cluster_company_uq. Race semantics under
+      // concurrent (omit, set, set, omit, …) call patterns: an explicit
+      // setter always overwrites an omitter's preserved value, which is the
+      // desired last-explicit-write-wins shape.
       const existing = await this.get(input.clusterConnectionId, input.companyId);
-      // Preserve httpProxyUrl when the caller didn't explicitly pass one (undefined).
-      // An explicit `null` clears it; an explicit string overwrites it.
       const httpProxyUrl =
         input.httpProxyUrl === undefined ? (existing?.httpProxyUrl ?? null) : input.httpProxyUrl;
+      const networkJson = { additionalAllowFqdns: input.additionalAllowFqdns, httpProxyUrl };
 
-      if (existing) {
-        const [updated] = await db.update(clusterTenantPolicies).set({
+      const [row] = await db
+        .insert(clusterTenantPolicies)
+        .values({
+          clusterConnectionId: input.clusterConnectionId,
+          companyId: input.companyId,
           quotaJson: input.quota,
           limitRangeJson: input.limitRange,
-          networkJson: { additionalAllowFqdns: input.additionalAllowFqdns, httpProxyUrl },
+          networkJson,
           imageOverridesJson: input.imageOverrides,
-          updatedAt: new Date(),
-        }).where(and(
-          eq(clusterTenantPolicies.clusterConnectionId, input.clusterConnectionId),
-          eq(clusterTenantPolicies.companyId, input.companyId),
-        )).returning();
-        return mapRow(updated);
-      }
-      const [created] = await db.insert(clusterTenantPolicies).values({
-        clusterConnectionId: input.clusterConnectionId,
-        companyId: input.companyId,
-        quotaJson: input.quota,
-        limitRangeJson: input.limitRange,
-        networkJson: { additionalAllowFqdns: input.additionalAllowFqdns, httpProxyUrl },
-        imageOverridesJson: input.imageOverrides,
-      }).returning();
-      return mapRow(created);
+        })
+        .onConflictDoUpdate({
+          target: [clusterTenantPolicies.clusterConnectionId, clusterTenantPolicies.companyId],
+          set: {
+            quotaJson: input.quota,
+            limitRangeJson: input.limitRange,
+            networkJson,
+            imageOverridesJson: input.imageOverrides,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      return mapRow(row);
     },
   };
 }

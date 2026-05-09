@@ -73,6 +73,36 @@ describe("clusterTenantPoliciesService", () => {
     expect(fetched?.limitRange?.default?.cpu).toBe("2");
   });
 
+  it("upsert() handles concurrent first-write without a unique-constraint error", async () => {
+    // Seed an isolated company so this case doesn't interact with rows
+    // written by earlier suite cases.
+    const conRows = await db.execute(sql`
+      INSERT INTO companies (name, issue_prefix) VALUES ('Delta Corp', 'DLT') RETURNING id
+    `);
+    const conCompanyId = (conRows[0] as { id: string }).id;
+    const svc = clusterTenantPoliciesService(db);
+    const N = 8;
+    // Pre-fix shape lost this race: two callers both observed existing=null
+    // and both attempted INSERT, with the loser surfacing a unique-constraint
+    // error from cluster_tenant_policies_cluster_company_uq. The atomic
+    // ON CONFLICT shape eliminates that error path.
+    await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        svc.upsert({
+          clusterConnectionId: clusterId,
+          companyId: conCompanyId,
+          quota: { requestsCpu: `${i}` },
+          limitRange: null,
+          additionalAllowFqdns: [],
+          imageOverrides: null,
+        }),
+      ),
+    );
+    const found = await svc.get(clusterId, conCompanyId);
+    expect(found).not.toBeNull();
+    expect(found?.quota?.requestsCpu).toMatch(/^\d$/);
+  });
+
   it("upsert() preserves httpProxyUrl when the caller doesn't pass one", async () => {
     const svc = clusterTenantPoliciesService(db);
     // Set a proxy URL via an explicit upsert.
