@@ -1404,6 +1404,51 @@ export function issueRoutes(
     return false;
   }
 
+  async function assertRecoveryActionAuthority(
+    req: Request,
+    res: Response,
+    issue: { id: string; companyId: string; assigneeAgentId: string | null },
+    activeRecoveryAction: Awaited<ReturnType<typeof recoveryActionsSvc.getActiveForIssue>>,
+    input: { source: "issue_update" | "recovery_action_resolution" },
+  ) {
+    if (req.actor.type !== "agent") return true;
+    if (!activeRecoveryAction) return true;
+
+    const actorAgentId = req.actor.agentId;
+    if (!actorAgentId) {
+      res.status(403).json({ error: "Agent authentication required" });
+      return false;
+    }
+    if (issue.assigneeAgentId === actorAgentId) return true;
+    if (
+      issue.assigneeAgentId &&
+      await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, issue.assigneeAgentId)
+    ) {
+      return true;
+    }
+    if (activeRecoveryAction.ownerAgentId === actorAgentId) return true;
+    if (
+      activeRecoveryAction.ownerAgentId &&
+      await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, activeRecoveryAction.ownerAgentId)
+    ) {
+      return true;
+    }
+
+    res.status(403).json({
+      error: "Agent cannot resolve another owner's recovery action",
+      details: {
+        issueId: issue.id,
+        recoveryActionId: activeRecoveryAction.id,
+        actorAgentId,
+        assigneeAgentId: issue.assigneeAgentId,
+        recoveryOwnerAgentId: activeRecoveryAction.ownerAgentId,
+        source: input.source,
+        securityPrinciples: ["Least Privilege", "Complete Mediation", "Secure Defaults"],
+      },
+    });
+    return false;
+  }
+
   async function resolveActiveIssueRun(issue: {
     id: string;
     assigneeAgentId: string | null;
@@ -2032,6 +2077,18 @@ export function issueRoutes(
     }
     assertCompanyAccess(req, existing.companyId);
     if (!(await assertAgentIssueMutationAllowed(req, res, existing))) return;
+    const activeRecoveryAction = await recoveryActionsSvc.getActiveForIssue(existing.companyId, existing.id);
+    if (
+      !(await assertRecoveryActionAuthority(
+        req,
+        res,
+        existing,
+        activeRecoveryAction,
+        { source: "recovery_action_resolution" },
+      ))
+    ) {
+      return;
+    }
 
     const { actionId, outcome, sourceIssueStatus, resolutionNote } = req.body;
     if (outcome === "false_positive" || outcome === "cancelled") {
@@ -3162,6 +3219,28 @@ export function issueRoutes(
     const requestedAssigneeAgentId =
       normalizedAssigneeAgentId === undefined ? existing.assigneeAgentId : normalizedAssigneeAgentId;
     const explicitMoveToTodoRequested = reopenRequested || resumeRequested === true;
+    const recoveryRelevantSourceMutationRequested =
+      req.body.status !== undefined ||
+      normalizedAssigneeAgentId !== undefined ||
+      req.body.assigneeUserId !== undefined ||
+      Array.isArray(req.body.blockedByIssueIds) ||
+      req.body.executionPolicy !== undefined ||
+      explicitMoveToTodoRequested;
+    const activeRecoveryActionBeforeUpdate = recoveryRelevantSourceMutationRequested
+      ? await recoveryActionsSvc.getActiveForIssue(existing.companyId, existing.id)
+      : null;
+    if (
+      recoveryRelevantSourceMutationRequested &&
+      !(await assertRecoveryActionAuthority(
+        req,
+        res,
+        existing,
+        activeRecoveryActionBeforeUpdate,
+        { source: "issue_update" },
+      ))
+    ) {
+      return;
+    }
     const effectiveMoveToTodoRequested =
       explicitMoveToTodoRequested ||
       (!!commentBody &&
@@ -3494,12 +3573,12 @@ export function issueRoutes(
       existing.status === "blocked" &&
       issue.status === "todo" &&
       (req.body.status !== undefined || reopened);
-    const activeRecoveryActionBeforeRevalidation = await recoveryActionsSvc.getActiveForIssue(issue.companyId, issue.id);
     const revalidatedRecoveryAction = await revalidateActiveSourceRecovery({
       issue,
       trigger: "issue_update",
       actor,
-      activeRecoveryAction: activeRecoveryActionBeforeRevalidation,
+      activeRecoveryAction:
+        activeRecoveryActionBeforeUpdate ?? await recoveryActionsSvc.getActiveForIssue(issue.companyId, issue.id),
       statusChanged: existing.status !== issue.status,
       assigneeChanged:
         existing.assigneeAgentId !== issue.assigneeAgentId ||
@@ -3511,7 +3590,7 @@ export function issueRoutes(
       reopened,
       blockedToTodoRecovery: statusChangedFromBlockedToTodo,
     });
-    if (activeRecoveryActionBeforeRevalidation && !revalidatedRecoveryAction) {
+    if (activeRecoveryActionBeforeUpdate && !revalidatedRecoveryAction) {
       issueResponse = {
         ...issueResponse,
         activeRecoveryAction: null,
