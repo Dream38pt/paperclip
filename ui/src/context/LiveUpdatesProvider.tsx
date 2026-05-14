@@ -698,14 +698,8 @@ function invalidateActivityQueries(
             queryClient.invalidateQueries({ queryKey: queryKeys.issues.document(ref, documentKey), ...invalidationOptions });
             queryClient.invalidateQueries({ queryKey: queryKeys.issues.documentRevisions(ref, documentKey), ...invalidationOptions });
           } else {
-            queryClient.invalidateQueries({
-              predicate: (query) =>
-                Array.isArray(query.queryKey)
-                && query.queryKey[0] === "issues"
-                && (query.queryKey[1] === "document" || query.queryKey[1] === "document-revisions")
-                && query.queryKey[2] === ref,
-              ...invalidationOptions,
-            });
+            queryClient.invalidateQueries({ queryKey: ["issues", "document", ref], ...invalidationOptions });
+            queryClient.invalidateQueries({ queryKey: ["issues", "document-revisions", ref], ...invalidationOptions });
           }
         }
         if (action?.startsWith("issue.thread_interaction_")) {
