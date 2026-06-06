@@ -15,6 +15,7 @@ type AssignabilityAgent = AgentEligibilityAgent;
 type AgentAssignmentConflictReason =
   | "pending_approval"
   | "assignee_terminated"
+  | "assignee_unknown_status"
   | "ancestor_terminated"
   | "ancestor_missing"
   | "ancestor_cross_company"
@@ -31,6 +32,11 @@ function assignmentMessage(kind: AgentAssignmentKind, reason: AgentAssignmentCon
     return kind === "routine"
       ? "Cannot assign routines to terminated agents"
       : "Cannot assign work to terminated agents";
+  }
+  if (reason === "assignee_unknown_status") {
+    return kind === "routine"
+      ? "Cannot assign routines to agents with an unsupported lifecycle status"
+      : "Cannot assign work to agents with an unsupported lifecycle status";
   }
   return kind === "routine"
     ? "Cannot assign routines to agents with an invalid org chain"
@@ -134,6 +140,14 @@ export async function assertAssignableAgent(
       companyId,
       assigneeAgentId: agentId,
       reason: "assignee_terminated",
+      chain,
+    }));
+  }
+  if (eligibility.assignabilityReason === "unknown_status") {
+    throw conflict(assignmentMessage(kind, "assignee_unknown_status"), conflictDetails({
+      companyId,
+      assigneeAgentId: agentId,
+      reason: "assignee_unknown_status",
       chain,
     }));
   }

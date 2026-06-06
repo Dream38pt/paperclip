@@ -15,6 +15,7 @@ export type AgentInvokabilityBlockReason =
   | "paused"
   | "terminated"
   | "pending_approval"
+  | "unknown_status"
   | "manager_missing"
   | "manager_company_mismatch"
   | "manager_terminated"
@@ -84,7 +85,9 @@ export function evaluateAgentInvokability(
 
   if (eligibility.invokable) return { invokable: true };
 
-  const directStatusReason = statusBlockReason(agent.status);
+  const directStatusReason = eligibility.invokabilityReason === "unknown_status"
+    ? "unknown_status"
+    : statusBlockReason(agent.status);
   if (directStatusReason) {
     return blocked(
       directStatusReason,

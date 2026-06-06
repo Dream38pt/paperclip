@@ -5,7 +5,8 @@ export type AgentEligibilityLifecycleReason =
   | "terminated"
   | "pending_approval"
   | "paused"
-  | "invalid_org_chain";
+  | "invalid_org_chain"
+  | "unknown_status";
 
 export interface AgentEligibilityAgent {
   id: string;
@@ -202,7 +203,9 @@ export function getAgentWorkEligibility(input: {
   const assignabilityReason: AgentEligibilityLifecycleReason = !isAgentStatusAssignableToWork(input.agent.status)
     ? input.agent.status === "terminated"
       ? "terminated"
-      : "pending_approval"
+      : input.agent.status === "pending_approval"
+        ? "pending_approval"
+        : "unknown_status"
     : orgChainHealth.status === "invalid_org_chain"
       ? "invalid_org_chain"
       : "eligible";
@@ -211,7 +214,9 @@ export function getAgentWorkEligibility(input: {
       ? "terminated"
       : input.agent.status === "pending_approval"
         ? "pending_approval"
-        : "paused"
+        : input.agent.status === "paused"
+          ? "paused"
+          : "unknown_status"
     : orgChainHealth.status === "invalid_org_chain"
       ? "invalid_org_chain"
       : "eligible";

@@ -159,6 +159,7 @@ import {
   evaluateAgentInvokability,
   evaluateAgentInvokabilityFromDb,
   shouldCancelRunsForNonInvokableAgent,
+  type AgentOrgRow,
 } from "./agent-invokability.js";
 import {
   redactQuarantinedBodyForHigherTrust,
@@ -3068,6 +3069,42 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
   async function getAgentInvokability(agent: typeof agents.$inferSelect | null | undefined) {
     return evaluateAgentInvokabilityFromDb(db, agent);
+  }
+
+  function toAgentOrgRow(agent: Pick<typeof agents.$inferSelect, "id" | "companyId" | "name" | "reportsTo" | "status">): AgentOrgRow {
+    return {
+      id: agent.id,
+      companyId: agent.companyId,
+      name: agent.name,
+      reportsTo: agent.reportsTo,
+      status: agent.status,
+    };
+  }
+
+  async function listCompanyAgentOrgRows(companyId: string): Promise<AgentOrgRow[]> {
+    return db
+      .select({
+        id: agents.id,
+        companyId: agents.companyId,
+        name: agents.name,
+        reportsTo: agents.reportsTo,
+        status: agents.status,
+      })
+      .from(agents)
+      .where(eq(agents.companyId, companyId));
+  }
+
+  function groupAgentOrgRowsByCompany(agentRows: AgentOrgRow[]) {
+    const byCompany = new Map<string, AgentOrgRow[]>();
+    for (const agent of agentRows) {
+      const companyAgents = byCompany.get(agent.companyId);
+      if (companyAgents) {
+        companyAgents.push(agent);
+      } else {
+        byCompany.set(agent.companyId, [agent]);
+      }
+    }
+    return byCompany;
   }
 
   async function getRun(runId: string, opts?: { unsafeFullResultJson?: boolean }) {
@@ -6584,14 +6621,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return Number(count ?? 0);
   }
 
-  async function claimQueuedRun(run: typeof heartbeatRuns.$inferSelect) {
+  async function claimQueuedRun(run: typeof heartbeatRuns.$inferSelect, companyAgents?: AgentOrgRow[]) {
     if (run.status !== "queued") return run;
     const agent = await getAgent(run.agentId);
     if (!agent) {
       await cancelRunInternal(run.id, "Cancelled because the agent no longer exists");
       return null;
     }
-    const invokability = await getAgentInvokability(agent);
+    const invokability = companyAgents
+      ? evaluateAgentInvokability(toAgentOrgRow(agent), companyAgents)
+      : await getAgentInvokability(agent);
     if (!invokability.invokable) {
       await cancelRunInternal(run.id, `Cancelled because the agent is not invokable: ${invokability.reason}`);
       return null;
@@ -7542,6 +7581,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             : sql`false`,
         );
       const issueById = new Map(issueRows.map((row) => [row.id, row]));
+      const companyAgents = await listCompanyAgentOrgRows(agent.companyId);
       const prioritizedRuns = [...queuedRuns].sort((left, right) => {
         const leftIssueId = readNonEmptyString(parseObject(left.contextSnapshot).issueId);
         const rightIssueId = readNonEmptyString(parseObject(right.contextSnapshot).issueId);
@@ -7563,7 +7603,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       const claimedRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
       for (const queuedRun of prioritizedRuns) {
         if (claimedRuns.length >= availableSlots) break;
-        const claimed = await claimQueuedRun(queuedRun);
+        const claimed = await claimQueuedRun(queuedRun, companyAgents);
         if (claimed) claimedRuns.push(claimed);
       }
       if (claimedRuns.length === 0) return [];
@@ -11016,21 +11056,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         .from(agents)
         .innerJoin(companies, eq(companies.id, agents.companyId))
         .where(eq(companies.status, "active"));
+      const agentsByCompany = groupAgentOrgRowsByCompany(allAgents.map(toAgentOrgRow));
       let checked = 0;
       let enqueued = 0;
       let skipped = 0;
 
       for (const agent of allAgents) {
-        const companyAgents = allAgents
-          .filter((candidate) => candidate.companyId === agent.companyId)
-          .map((candidate) => ({
-            id: candidate.id,
-            companyId: candidate.companyId,
-            name: candidate.name,
-            reportsTo: candidate.reportsTo,
-            status: candidate.status,
-          }));
-        const invokability = evaluateAgentInvokability(agent, companyAgents);
+        const invokability = evaluateAgentInvokability(toAgentOrgRow(agent), agentsByCompany.get(agent.companyId) ?? []);
         if (!invokability.invokable) continue;
         const policy = parseHeartbeatPolicy(agent);
         if (!policy.enabled || policy.intervalSec <= 0) continue;

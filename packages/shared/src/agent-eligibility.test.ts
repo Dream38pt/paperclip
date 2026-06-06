@@ -64,6 +64,19 @@ describe("agent work eligibility", () => {
     });
   });
 
+  it("reports unknown lifecycle statuses explicitly", () => {
+    const target = agent({ status: "sabbatical" });
+    const manager = agent({ id: "manager-1", name: "CTO", status: "active", reportsTo: null });
+
+    expect(getAgentWorkEligibility({ agent: target, agents: [target, manager] })).toMatchObject({
+      assignable: false,
+      invokable: false,
+      assignabilityReason: "unknown_status",
+      invokabilityReason: "unknown_status",
+      orgChainHealth: { status: "healthy" },
+    });
+  });
+
   it("blocks active descendants of terminated ancestors and reports repair details", () => {
     const target = agent({ id: "qa-2", name: "QA 2", status: "active", reportsTo: "cto-2" });
     const terminatedManager = agent({
