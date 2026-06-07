@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   companies,
   createDb,
+  documentLinks,
   documentRevisions,
   documents,
   issueDocuments,
@@ -37,6 +38,7 @@ describeEmbeddedPostgres("documentService system issue documents", () => {
 
   afterEach(async () => {
     await db.delete(documentRevisions);
+    await db.delete(documentLinks);
     await db.delete(issueDocuments);
     await db.delete(documents);
     await db.delete(issues);
@@ -192,5 +194,36 @@ describeEmbeddedPostgres("documentService system issue documents", () => {
       body: "# Agent replacement plan",
       lockedAt: null,
     }));
+  });
+
+  it("maintains document links for issue-document compatibility and company library queries", async () => {
+    const { issueId } = await createIssueWithDocuments();
+
+    const plan = await svc.getIssueDocumentByKey(issueId, "plan");
+    expect(plan).not.toBeNull();
+
+    const links = await db.select().from(documentLinks);
+    expect(links).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        documentId: plan!.id,
+        targetType: "issue",
+        targetId: issueId,
+        relationship: "issue_document",
+      }),
+    ]));
+
+    const docs = await svc.listCompanyDocuments(plan!.companyId, {
+      limit: 50,
+      offset: 0,
+    });
+    expect(docs.map((doc) => doc.id)).toContain(plan!.id);
+    expect(docs.find((doc) => doc.id === plan!.id)?.backlinks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetType: "issue",
+        targetId: issueId,
+        issueDocumentKey: "plan",
+        identifier: "PAP-1600",
+      }),
+    ]));
   });
 });

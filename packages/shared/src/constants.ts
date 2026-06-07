@@ -351,6 +351,23 @@ export const DOCUMENT_ANNOTATION_ANCHOR_CONFIDENCES = [
 export type DocumentAnnotationAnchorConfidence =
   (typeof DOCUMENT_ANNOTATION_ANCHOR_CONFIDENCES)[number];
 
+export const DOCUMENT_STATUSES = ["draft", "in_review", "approved", "archived"] as const;
+export type DocumentStatus = (typeof DOCUMENT_STATUSES)[number];
+
+export const DOCUMENT_TYPES = ["plan", "spec", "brief", "report", "other"] as const;
+export type DocumentType = (typeof DOCUMENT_TYPES)[number];
+
+export const DOCUMENT_LINK_TARGET_TYPES = [
+  "issue",
+  "project",
+  "goal",
+  "run",
+  "work_product",
+  "approval",
+  "agent",
+] as const;
+export type DocumentLinkTargetType = (typeof DOCUMENT_LINK_TARGET_TYPES)[number];
+
 export const ISSUE_EXECUTION_POLICY_MODES = ["normal", "auto"] as const;
 export type IssueExecutionPolicyMode = (typeof ISSUE_EXECUTION_POLICY_MODES)[number];
 

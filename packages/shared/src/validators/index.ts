@@ -57,6 +57,17 @@ export {
   type UpdateResourceMembership,
 } from "./resource-memberships.js";
 export {
+  companyDocumentListQuerySchema,
+  createDocumentLinkSchema,
+  documentLinkTargetTypeSchema,
+  documentStatusSchema,
+  documentTypeSchema,
+  updateDocumentMetadataSchema,
+  type CompanyDocumentListQuery,
+  type CreateDocumentLink,
+  type UpdateDocumentMetadata,
+} from "./document.js";
+export {
   companySkillSourceTypeSchema,
   companySkillTrustLevelSchema,
   companySkillCompatibilitySchema,

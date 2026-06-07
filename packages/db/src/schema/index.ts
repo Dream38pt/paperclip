@@ -54,6 +54,7 @@ export { issueReadStates } from "./issue_read_states.js";
 export { assets } from "./assets.js";
 export { issueAttachments } from "./issue_attachments.js";
 export { documents } from "./documents.js";
+export { documentLinks } from "./document_links.js";
 export { documentRevisions } from "./document_revisions.js";
 export { issueDocuments } from "./issue_documents.js";
 export { documentAnnotationThreads } from "./document_annotation_threads.js";

@@ -25,6 +25,9 @@ import {
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   restoreIssueDocumentRevisionSchema,
+  companyDocumentListQuerySchema,
+  createDocumentLinkSchema,
+  updateDocumentMetadataSchema,
   upsertIssueFeedbackVoteSchema,
   // Project
   createProjectSchema,
@@ -416,6 +419,10 @@ const responses = {
   },
   notFound: {
     description: "Not found",
+    content: { "application/json": { schema: ErrorSchema } },
+  },
+  conflict: {
+    description: "Conflict",
     content: { "application/json": { schema: ErrorSchema } },
   },
   unprocessable: {
@@ -1407,6 +1414,83 @@ registry.registerPath({
   summary: "List issue documents",
   request: { params: z.object({ id: z.string() }) },
   responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/documents",
+  tags: ["documents"],
+  summary: "List company documents",
+  request: {
+    params: z.object({ companyId: z.string().uuid() }),
+    query: companyDocumentListQuerySchema,
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/projects/{projectId}/documents",
+  tags: ["documents"],
+  summary: "List project-linked documents",
+  request: {
+    params: z.object({ projectId: z.string().uuid() }),
+    query: companyDocumentListQuerySchema.partial({ projectId: true }),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/documents/{documentId}",
+  tags: ["documents"],
+  summary: "Get a company document",
+  request: { params: z.object({ companyId: z.string().uuid(), documentId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/api/companies/{companyId}/documents/{documentId}",
+  tags: ["documents"],
+  summary: "Update document metadata",
+  request: {
+    params: z.object({ companyId: z.string().uuid(), documentId: z.string().uuid() }),
+    body: jsonBody(updateDocumentMetadataSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/documents/{documentId}/backlinks",
+  tags: ["documents"],
+  summary: "List document backlinks",
+  request: { params: z.object({ companyId: z.string().uuid(), documentId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/documents/{documentId}/links",
+  tags: ["documents"],
+  summary: "Create or update a document link",
+  request: {
+    params: z.object({ companyId: z.string().uuid(), documentId: z.string().uuid() }),
+    body: jsonBody(createDocumentLinkSchema),
+  },
+  responses: { 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/companies/{companyId}/documents/{documentId}/links/{linkId}",
+  tags: ["documents"],
+  summary: "Delete a document link",
+  request: {
+    params: z.object({ companyId: z.string().uuid(), documentId: z.string().uuid(), linkId: z.string().uuid() }),
+  },
+  responses: { 204: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 409: r.conflict },
 });
 
 registry.registerPath({
