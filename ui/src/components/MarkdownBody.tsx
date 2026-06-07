@@ -12,13 +12,7 @@ import { issuesApi } from "../api/issues";
 import { queryKeys } from "../lib/queryKeys";
 import { parseIssueReferenceFromHref, remarkLinkIssueReferences } from "../lib/issue-reference";
 import { remarkSoftBreaks } from "../lib/remark-soft-breaks";
-import {
-  parseWorkspaceFileHref,
-  remarkWorkspaceFileRefs,
-  WORKSPACE_FILE_HREF_PREFIX,
-} from "../lib/remark-workspace-file-refs";
 import { StatusIcon } from "./StatusIcon";
-import { WorkspaceFileLink } from "./WorkspaceFileLink";
 
 interface MarkdownBodyProps {
   children: string;
@@ -32,12 +26,6 @@ interface MarkdownBodyProps {
   wikiLinkRoot?: string;
   /** Optional href resolver for wikilinks. Return null to leave a token as plain text. */
   resolveWikiLinkHref?: (target: string, label: string) => string | null | undefined;
-  /**
-   * When true, auto-link workspace file references inside inline code spans
-   * (e.g. `ui/src/pages/IssueDetail.tsx:42`). Requires a FileViewerProvider
-   * ancestor so that clicking a link opens the viewer.
-   */
-  linkWorkspaceFileReferences?: boolean;
   /** Optional resolver for relative image paths (e.g. within export packages) */
   resolveImageSrc?: (src: string) => string | null;
   /** Called when a user clicks an inline image */
@@ -172,7 +160,6 @@ function extractMermaidSource(children: ReactNode): string | null {
 }
 
 function safeMarkdownUrlTransform(url: string): string {
-  if (url.startsWith(WORKSPACE_FILE_HREF_PREFIX)) return url;
   return parseMentionChipHref(url) ? url : defaultUrlTransform(url);
 }
 
@@ -580,7 +567,6 @@ export function MarkdownBody({
   enableWikiLinks = false,
   wikiLinkRoot,
   resolveWikiLinkHref,
-  linkWorkspaceFileReferences = false,
   resolveImageSrc,
   onImageClick,
 }: MarkdownBodyProps) {
@@ -598,9 +584,6 @@ export function MarkdownBody({
   }
   if (linkIssueReferences) {
     remarkPlugins.push([remarkLinkIssueReferences, { knownPrefixes }]);
-  }
-  if (linkWorkspaceFileReferences) {
-    remarkPlugins.push(remarkWorkspaceFileRefs);
   }
   if (softBreaks) {
     remarkPlugins.push(remarkSoftBreaks);
@@ -653,13 +636,6 @@ export function MarkdownBody({
     a: ({ node: _node, href, style: linkStyle, children: linkChildren, ...anchorProps }) => {
       const dataProps = anchorProps as Record<string, unknown>;
       const isWikiLink = dataProps["data-paperclip-wiki-link"] === "true";
-      if (linkWorkspaceFileReferences) {
-        const workspaceFileRef = parseWorkspaceFileHref(href);
-        if (workspaceFileRef) {
-          return <WorkspaceFileLink workspaceFileRef={workspaceFileRef} />;
-        }
-      }
-
       if (isWikiLink && href && !/^[a-z][a-z\d+.-]*:/i.test(href) && !href.startsWith("//")) {
         return (
           <Link
