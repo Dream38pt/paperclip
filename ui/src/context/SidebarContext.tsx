@@ -176,7 +176,9 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       peeking,
       setPeeking,
       forceCollapsed,
+      setForceCollapsed,
       routeRequestsCollapsed,
+      setRouteRequestsCollapsed,
     ],
   );
 

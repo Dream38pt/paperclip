@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarSection } from "./SidebarSection";
+import { SidebarNavExpandedProvider } from "./SidebarNavItem";
 import { Plus } from "lucide-react";
 
 const sidebarState = vi.hoisted(() => ({
@@ -15,6 +16,9 @@ const sidebarState = vi.hoisted(() => ({
 
 vi.mock("@/lib/router", () => ({
   Link: ({ children, to, ...props }: { children: ReactNode; to: string }) => (
+    <a href={to} {...props}>{children}</a>
+  ),
+  NavLink: ({ children, to, ...props }: { children: ReactNode; to: string }) => (
     <a href={to} {...props}>{children}</a>
   ),
 }));
@@ -157,6 +161,30 @@ describe("SidebarSection", () => {
     expect(staticLabelControl?.tagName).toBe("DIV");
     expect(staticLabelControl?.getAttribute("class")).not.toContain("hover:bg-accent/50");
     expect(staticLabelControl?.getAttribute("class")).not.toContain("focus-visible:bg-accent/50");
+  });
+
+  it("keeps section labels visible inside an expanded contextual pane", async () => {
+    sidebarState.collapsed = true;
+    const currentRoot = createRoot(container);
+    root = currentRoot;
+
+    await act(async () => {
+      currentRoot.render(
+        <SidebarNavExpandedProvider>
+          <SidebarSection label="Settings">
+            <a href="/settings">General</a>
+          </SidebarSection>
+        </SidebarNavExpandedProvider>,
+      );
+    });
+    await flushReact();
+
+    const settingsLabel = Array.from(container.querySelectorAll("span"))
+      .find((element) => element.textContent === "Settings");
+
+    expect(settingsLabel).toBeTruthy();
+    expect(settingsLabel?.getAttribute("class")).toContain("uppercase");
+    expect(container.querySelector(".bg-border\\/60")).toBeNull();
   });
 
   it("keeps the header action outside the label menu hit area", async () => {

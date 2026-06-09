@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { useSidebarNavExpanded } from "./SidebarNavItem";
 
 type SidebarSectionIcon = ComponentType<{ className?: string }>;
 
@@ -190,7 +191,8 @@ export function SidebarSection({
   headerAction,
 }: SidebarSectionProps) {
   const { collapsed, peeking } = useSidebar();
-  const rail = collapsed && !peeking;
+  const forceExpanded = useSidebarNavExpanded();
+  const rail = collapsed && !peeking && !forceExpanded;
   const content = <div className="flex flex-col gap-0.5 mt-0.5">{children}</div>;
 
   // Collapsed rail: the section header would only show a clipped sliver of its

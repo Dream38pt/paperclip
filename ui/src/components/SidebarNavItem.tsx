@@ -27,6 +27,10 @@ export function SidebarNavExpandedProvider({ children }: { children: ReactNode }
   );
 }
 
+export function useSidebarNavExpanded() {
+  return useContext(SidebarNavExpandedContext);
+}
+
 interface SidebarNavItemProps {
   to: string;
   label: string;
@@ -63,7 +67,7 @@ export function SidebarNavItem({
   const { isMobile, setSidebarOpen, collapsed, peeking } = useSidebar();
   // A fixed-width contextual pane (SecondarySidebar) forces full labels even
   // when the global app sidebar is collapsed to its rail (PAP-10700).
-  const forceExpanded = useContext(SidebarNavExpandedContext);
+  const forceExpanded = useSidebarNavExpanded();
   // The icon-only rail presentation only applies when pinned collapsed and not
   // peeking; a peek/expanded panel — or an expanded contextual pane — restores
   // the full label + badge.

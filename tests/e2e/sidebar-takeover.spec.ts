@@ -119,9 +119,10 @@ test.describe("Sidebar takeover (collapse + secondary pane)", () => {
     expect(labelBox!.width).toBeGreaterThan(20);
   });
 
-  test("an explicit expanded pin overrides the route-driven collapse", async ({ page }) => {
-    // User has pinned the sidebar expanded ("0"). The settings route still
-    // requests a collapse, but the pin must win (pin > route request > default).
+  test("settings force-collapse overrides an expanded pin without mutating it", async ({ page }) => {
+    // User has pinned the sidebar expanded ("0"). Company settings is a hard
+    // secondary-sidebar takeover route, so forceCollapsed wins while the route is
+    // active (force > pin > route request > default) but must not mutate the pin.
     await page.addInitScript(
       ({ key }) => {
         window.localStorage.setItem(key, "0");
@@ -134,8 +135,14 @@ test.describe("Sidebar takeover (collapse + secondary pane)", () => {
     // Secondary pane still shows on the takeover route.
     await expect(page.locator("[data-secondary-sidebar]")).toBeVisible();
 
-    // The app sidebar stays expanded despite the route request: the
-    // expanded-only header control is visible.
+    // The app sidebar is hard-collapsed despite the stored expanded pin.
+    await expect(page.getByLabel(APP_SIDEBAR_EXPANDED_MARKER)).toHaveCount(0);
+
+    await page.goto(`/${prefix}/dashboard`);
+
+    // Leaving the takeover route clears the force and restores the user's
+    // persisted expanded pin.
+    await expect(page.locator("[data-secondary-sidebar]")).toHaveCount(0);
     await expect(page.getByLabel(APP_SIDEBAR_EXPANDED_MARKER)).toBeVisible();
   });
 
