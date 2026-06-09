@@ -274,7 +274,7 @@ export function IssueBlockedNotice({
                     </code>{" "}
                     so a fresh run is queued, or add a real blocker if work genuinely can't proceed.
                   </p>
-                  {blockerAttention.coveredBlockerCount > 0 ? (
+                  {(blockerAttention?.coveredBlockerCount ?? 0) > 0 ? (
                     <p className="text-xs leading-5 text-amber-800 dark:text-amber-200">
                       Some ancestor blockers are still covered by active work — see the "Ultimately waiting on" row
                       below.

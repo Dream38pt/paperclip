@@ -10612,7 +10612,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       if (outcome.kind === "deferred" || outcome.kind === "duplicate") return null;
       if (outcome.kind === "existing") return outcome.run;
       if (outcome.kind === "skipped") {
-        if ("dependencyGate" in outcome && outcome.dependencyGate && reason === BLOCKER_RELEASE_WAKE_REASON) {
+        if ("dependencyGate" in outcome && outcome.dependencyGate && reason === BLOCKER_RELEASE_WAKE_REASON && issueId) {
           await requeueBlockerReleaseWakeIfDependencyGateCleared({
             companyId: agent.companyId,
             agentId,
