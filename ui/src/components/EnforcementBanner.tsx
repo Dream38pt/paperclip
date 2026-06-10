@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cva, type VariantProps } from "class-variance-authority";
-import { ShieldAlert, ShieldCheck } from "lucide-react";
+import { ShieldAlert, ShieldCheck, type LucideIcon } from "lucide-react";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { queryKeys } from "@/lib/queryKeys";
@@ -9,10 +10,17 @@ import { toolsApi } from "@/api/tools";
 /**
  * Persistent enforcement-state banner for the Tools & Access surface (PAP-10389).
  *
- * Always rendered so users never mistake the absence of a warning for the
- * absence of enforcement. The `denied-detected` variant tints when governed
- * tool calls were denied or failed in the last hour. This is an *observability*
- * banner — enforcement itself lives in the tool gateway, not here.
+ * Two modes:
+ *
+ * 1. **Data-driven** (default) — pass only `companyId`. Renders the standing
+ *    "enforcement is server-side" message and tints to `denied-detected` when
+ *    governed tool calls were denied or failed in the last hour. This is an
+ *    *observability* banner — enforcement itself lives in the tool gateway.
+ *
+ * 2. **Presentational** (`tone` + `title`/`body`) — a static governance banner
+ *    used to surface a fixed message such as the PAP-10400 trust-tier copy on
+ *    the Runtime tab. Tones map to the same OKLCH token palette used elsewhere:
+ *    `info` (neutral/shield), `warning` (amber), `error` (destructive).
  */
 const enforcementBanner = cva(
   "flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm",
@@ -22,6 +30,11 @@ const enforcementBanner = cva(
         default: "border-border bg-muted/40 text-muted-foreground",
         "denied-detected":
           "border-amber-500/40 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200",
+        info: "border-border bg-muted/40 text-muted-foreground",
+        warning:
+          "border-amber-500/40 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200",
+        error:
+          "border-destructive/40 bg-destructive/5 text-destructive dark:text-destructive",
       },
     },
     defaultVariants: { variant: "default" },
@@ -31,21 +44,92 @@ const enforcementBanner = cva(
 const DENY_ACTIONS = new Set(["tool_gateway.call_denied", "tool_gateway.call_failed"]);
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
+export type EnforcementTone = "info" | "warning" | "error";
+
 export interface EnforcementBannerProps extends VariantProps<typeof enforcementBanner> {
-  companyId: string;
+  companyId?: string;
   className?: string;
   /** Override the computed variant (used by the design guide). */
   forceVariant?: "default" | "denied-detected";
   recentDenialCount?: number;
+  /**
+   * Presentational mode: when provided, the banner renders a static governance
+   * message with this tone instead of the data-driven denial summary.
+   */
+  tone?: EnforcementTone;
+  /** Presentational title (bold first line). */
+  title?: ReactNode;
+  /** Presentational body copy. */
+  body?: ReactNode;
+  /** Override the leading icon (presentational mode). */
+  icon?: LucideIcon;
+  /** Optional trailing action node (presentational mode). */
+  action?: ReactNode;
 }
 
-export function EnforcementBanner({ companyId, className, forceVariant, recentDenialCount }: EnforcementBannerProps) {
+function PresentationalBanner({
+  tone,
+  title,
+  body,
+  icon,
+  action,
+  className,
+}: {
+  tone: EnforcementTone;
+  title?: ReactNode;
+  body?: ReactNode;
+  icon?: LucideIcon;
+  action?: ReactNode;
+  className?: string;
+}) {
+  const Icon = icon ?? (tone === "info" ? ShieldCheck : ShieldAlert);
+  const iconTone =
+    tone === "info"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : tone === "warning"
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-destructive";
+  return (
+    <div className={cn(enforcementBanner({ variant: tone }), className)} role="status">
+      <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", iconTone)} />
+      <div className="min-w-0 flex-1 space-y-0.5">
+        {title ? <p className="font-medium">{title}</p> : null}
+        {body ? <p className="opacity-90">{body}</p> : null}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
+  );
+}
+
+export function EnforcementBanner(props: EnforcementBannerProps) {
+  const { companyId, className, forceVariant, recentDenialCount, tone, title, body, icon, action } = props;
+
+  // Presentational mode short-circuits the data hook below.
+  const isPresentational = tone !== undefined;
+
   const audit = useQuery({
-    queryKey: queryKeys.tools.audit(companyId, 100),
-    queryFn: () => toolsApi.listAudit(companyId, 100),
-    enabled: forceVariant === undefined && recentDenialCount === undefined && !!companyId,
+    queryKey: queryKeys.tools.audit(companyId ?? "", 100),
+    queryFn: () => toolsApi.listAudit(companyId ?? "", 100),
+    enabled:
+      !isPresentational &&
+      forceVariant === undefined &&
+      recentDenialCount === undefined &&
+      !!companyId,
     refetchInterval: 30_000,
   });
+
+  if (isPresentational) {
+    return (
+      <PresentationalBanner
+        tone={tone}
+        title={title}
+        body={body}
+        icon={icon}
+        action={action}
+        className={className}
+      />
+    );
+  }
 
   const computedCount =
     recentDenialCount ??

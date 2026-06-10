@@ -1636,6 +1636,31 @@ export function DesignGuide() {
           </p>
         </SubSection>
 
+        <SubSection title="EnforcementBanner — presentational tones (info / warning / error)">
+          <div className="space-y-3">
+            <EnforcementBanner
+              tone="info"
+              title="Effective access — server resolved."
+              body="This is exactly what the tool gateway will accept. Profile and policy edits reflect within ~5s; the prompt cannot expand it."
+            />
+            <EnforcementBanner
+              tone="warning"
+              title="Local stdio is local code execution, not a security sandbox."
+              body="A local-stdio slot runs with the orchestrator's privileges. Only bind trusted commands; quarantine anything you would not run yourself."
+            />
+            <EnforcementBanner
+              tone="error"
+              title="Runtime failed closed."
+              body="The supervisor is restarting (attempt 2/3). The gateway returns runtime-error and the agent does not see partial output."
+            />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Static governance copy with a tone. Used for the PAP-10400 trust-tier banner on Runtime and the
+            effective-access banner on Agent → Tools. Pass <code>title</code>/<code>body</code> and an optional{" "}
+            <code>icon</code>.
+          </p>
+        </SubSection>
+
         <SubSection title="Tool-access status keys (StatusBadge)">
           <div className="flex flex-wrap items-center gap-2">
             {[

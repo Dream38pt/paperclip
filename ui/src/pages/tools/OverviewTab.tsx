@@ -1,39 +1,30 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { AppWindow, Plug, Server, ScrollText, ShieldAlert, Shield } from "lucide-react";
+import { Activity, AlertTriangle, AppWindow, Plug, Server, ShieldAlert, Shield } from "lucide-react";
 import { Link } from "@/lib/router";
 import { queryKeys } from "@/lib/queryKeys";
 import { toolsApi } from "@/api/tools";
 import { Card, CardContent } from "@/components/ui/card";
-import { ErrorState, LoadingState, RelativeTime, DecisionBadge } from "./shared";
-
-function StatCard({
-  icon,
-  label,
-  value,
-  to,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: ReactNode;
-  to: string;
-}) {
-  return (
-    <Link to={to} className="block">
-      <Card className="transition-colors hover:border-primary/50">
-        <CardContent className="flex items-center gap-3 py-4">
-          <div className="text-muted-foreground">{icon}</div>
-          <div>
-            <div className="text-2xl font-semibold text-foreground">{value}</div>
-            <div className="text-xs text-muted-foreground">{label}</div>
-          </div>
-        </CardContent>
-      </Card>
-    </Link>
-  );
-}
+import { MetricCard } from "@/components/MetricCard";
+import { EnforcementBanner } from "@/components/EnforcementBanner";
+import { ErrorState, LoadingState, RelativeTime, DecisionBadge, HealthBadge } from "./shared";
 
 const DENY_ACTIONS = new Set(["tool_gateway.call_denied", "tool_gateway.call_failed"]);
+
+function formatLatency(value: number | null | undefined) {
+  if (typeof value !== "number") return "—";
+  return `${value}ms`;
+}
+
+/** Label / mono-value row for the runtime-health side panel. */
+function PropertyRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="font-mono text-sm text-foreground">{value}</span>
+    </div>
+  );
+}
 
 export function OverviewTab({ companyId }: { companyId: string }) {
   const apps = useQuery({
@@ -48,6 +39,10 @@ export function OverviewTab({ companyId }: { companyId: string }) {
     queryKey: queryKeys.tools.runtimeSlots(companyId),
     queryFn: () => toolsApi.listRuntimeSlots(companyId),
   });
+  const runtimeHealth = useQuery({
+    queryKey: queryKeys.tools.runtimeHealth(companyId),
+    queryFn: () => toolsApi.getRuntimeHealth(companyId),
+  });
   const trustRules = useQuery({
     queryKey: queryKeys.tools.trustRules(companyId),
     queryFn: () => toolsApi.listTrustRules(companyId),
@@ -57,7 +52,7 @@ export function OverviewTab({ companyId }: { companyId: string }) {
     queryFn: () => toolsApi.listAudit(companyId, 100),
   });
 
-  const anyError = apps.error || connections.error || slots.error || audit.error || trustRules.error;
+  const anyError = apps.error || connections.error || slots.error || runtimeHealth.error || audit.error || trustRules.error;
   if (anyError) {
     return (
       <ErrorState
@@ -66,95 +61,180 @@ export function OverviewTab({ companyId }: { companyId: string }) {
           apps.refetch();
           connections.refetch();
           slots.refetch();
+          runtimeHealth.refetch();
           trustRules.refetch();
           audit.refetch();
         }}
       />
     );
   }
-  if (apps.isLoading || connections.isLoading || slots.isLoading || audit.isLoading) {
+  if (apps.isLoading || connections.isLoading || slots.isLoading || runtimeHealth.isLoading || audit.isLoading) {
     return <LoadingState />;
   }
 
-  const activeConnections = (connections.data?.connections ?? []).filter(
+  const appList = apps.data?.applications ?? [];
+  const connList = connections.data?.connections ?? [];
+  const slotList = slots.data?.runtimeSlots ?? [];
+  const trustList = trustRules.data?.trustRules ?? [];
+
+  const mcpApps = appList.filter((a) => a.type === "mcp_http" || a.type === "mcp_stdio").length;
+  const pluginApps = appList.filter((a) => a.type === "paperclip_plugin").length;
+  const activeConnections = connList.filter(
     (c) => c.enabled && (c.status ?? "active") !== "archived",
   ).length;
+  const runningSlots = slotList.filter((s) => s.status === "running" || s.status === "idle").length;
+  const enabledTrust = trustList.filter((t) => t.enabled).length;
+
   const recentDenials = (audit.data ?? []).filter((row) => DENY_ACTIONS.has(row.action)).slice(0, 6);
+  const health = runtimeHealth.data;
+  const metrics = health?.metrics;
+  const firingAlerts = health?.alerts ?? [];
+  const healthStatusKey =
+    health?.status === "critical" ? "error" : health?.status === "degraded" ? "degraded" : "ok";
 
   return (
     <div className="space-y-5">
+      <EnforcementBanner companyId={companyId} />
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard
-          icon={<AppWindow className="h-5 w-5" />}
-          label="Applications"
-          value={apps.data?.applications.length ?? 0}
-          to="/company/settings/tools/applications"
-        />
-        <StatCard
-          icon={<Plug className="h-5 w-5" />}
-          label="Active connections"
-          value={activeConnections}
-          to="/company/settings/tools/connections"
-        />
-        <StatCard
-          icon={<Server className="h-5 w-5" />}
-          label="Runtime slots"
-          value={slots.data?.runtimeSlots.length ?? 0}
-          to="/company/settings/tools/runtime"
-        />
-        <StatCard
-          icon={<Shield className="h-5 w-5" />}
-          label="Trust rules"
-          value={trustRules.data?.trustRules.length ?? 0}
-          to="/company/settings/tools/policies"
-        />
+        <Card className="overflow-hidden py-0">
+          <MetricCard
+            icon={AppWindow}
+            label="Applications"
+            value={appList.length}
+            description={`${mcpApps} MCP · ${pluginApps} plugin`}
+            to="/company/settings/tools/applications"
+          />
+        </Card>
+        <Card className="overflow-hidden py-0">
+          <MetricCard
+            icon={Plug}
+            label="Active connections"
+            value={activeConnections}
+            description={`${activeConnections} of ${connList.length} enabled`}
+            to="/company/settings/tools/connections"
+          />
+        </Card>
+        <Card className="overflow-hidden py-0">
+          <MetricCard
+            icon={Server}
+            label="Runtime slots"
+            value={slotList.length}
+            description={`${runningSlots} running`}
+            to="/company/settings/tools/runtime"
+          />
+        </Card>
+        <Card className="overflow-hidden py-0">
+          <MetricCard
+            icon={Shield}
+            label="Trust rules"
+            value={trustList.length}
+            description={`${enabledTrust} enabled`}
+            to="/company/settings/tools/policies"
+          />
+        </Card>
       </div>
 
-      <Card>
-        <CardContent className="py-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-            <ShieldAlert className="h-4 w-4 text-destructive" />
-            Recent denials &amp; failures
-            <Link
-              to="/company/settings/tools/audit"
-              className="ml-auto text-xs font-medium text-primary hover:underline"
-            >
-              View full audit →
-            </Link>
-          </div>
-          {recentDenials.length === 0 ? (
-            <p className="py-4 text-sm text-muted-foreground">
-              No denied or failed tool calls in the last {audit.data?.length ?? 0} audit events.
-            </p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {recentDenials.map((row) => {
-                const tool =
-                  (row.details?.tool as string | undefined) ??
-                  (row.details?.toolName as string | undefined) ??
-                  "—";
-                return (
-                  <li key={row.id} className="flex items-center gap-3 py-2 text-sm">
-                    <DecisionBadge decision={row.action.endsWith("denied") ? "deny" : "block"} />
-                    <span className="font-mono text-xs text-foreground">{tool}</span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {(row.details?.reasonCode as string | undefined) ?? row.action}
-                    </span>
-                    <span className="ml-auto shrink-0 text-xs">
-                      <RelativeTime value={row.createdAt} />
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <div className="grid gap-5 lg:grid-cols-[1.6fr_1fr]">
+        <Card>
+          <CardContent className="py-4">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+              <ShieldAlert className="h-4 w-4 text-destructive" />
+              Recent denials &amp; failures
+              <Link
+                to="/company/settings/tools/audit"
+                className="ml-auto text-xs font-medium text-primary hover:underline"
+              >
+                View full audit →
+              </Link>
+            </div>
+            {recentDenials.length === 0 ? (
+              <p className="py-4 text-sm text-muted-foreground">
+                No denied or failed tool calls in the last {audit.data?.length ?? 0} audit events.
+              </p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                    <th className="py-2 pr-3 font-medium">Tool</th>
+                    <th className="py-2 pr-3 font-medium">Actor</th>
+                    <th className="py-2 pr-3 font-medium">Reason</th>
+                    <th className="py-2 pr-3 font-medium">Outcome</th>
+                    <th className="py-2 pl-3 text-right font-medium">When</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {recentDenials.map((row) => {
+                    const tool =
+                      (row.details?.tool as string | undefined) ??
+                      (row.details?.toolName as string | undefined) ??
+                      "—";
+                    const runId = row.details?.runId as string | undefined;
+                    return (
+                      <tr key={row.id} className="align-top">
+                        <td className="py-2 pr-3 font-mono text-xs text-foreground">{tool}</td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground">
+                          {row.actorType ?? "—"}
+                          {runId ? <span className="block font-mono text-[11px]">run {runId.slice(0, 8)}</span> : null}
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground">
+                          {(row.details?.reasonCode as string | undefined) ?? row.action}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <DecisionBadge decision={row.action.endsWith("denied") ? "deny" : "block"} />
+                        </td>
+                        <td className="py-2 pl-3 text-right text-xs">
+                          <RelativeTime value={row.createdAt} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </CardContent>
+        </Card>
 
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <ScrollText className="h-3.5 w-3.5" />
-        Counts reflect server state. Enforcement happens in the tool gateway, not in this UI.
-      </p>
+        <Card className={health?.status === "critical" ? "border-destructive/40" : undefined}>
+          <CardContent className="py-4">
+            <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
+              <Activity className="h-4 w-4 text-muted-foreground" />
+              Runtime health
+              <HealthBadge status={healthStatusKey} label={health?.status ?? "unknown"} />
+              <Link
+                to="/company/settings/tools/runtime"
+                className="ml-auto text-xs font-medium text-primary hover:underline"
+              >
+                View runtime →
+              </Link>
+            </div>
+            <div className="mt-3 divide-y divide-border">
+              <PropertyRow label="Active slots" value={metrics?.activeSlots ?? 0} />
+              <PropertyRow label="P95 latency" value={formatLatency(metrics?.p95ToolLatencyMsLastHour)} />
+              <PropertyRow label="Timeout rate" value={`${metrics?.timeoutRateLastHour ?? 0}%`} />
+              <PropertyRow label="Capacity deferrals" value={metrics?.capacityDeferralsLastHour ?? 0} />
+            </div>
+            {firingAlerts.length > 0 ? (
+              <ul className="mt-3 divide-y divide-border border-t border-border">
+                {firingAlerts.slice(0, 4).map((alert) => (
+                  <li key={alert.name} className="flex items-start gap-2 py-2 text-sm">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <div className="min-w-0">
+                      <div className="font-mono text-xs text-foreground">{alert.name}</div>
+                      <div className="text-xs text-muted-foreground">{alert.observed}</div>
+                    </div>
+                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">{alert.severity}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 border-t border-border pt-3 text-sm text-muted-foreground">
+                No active runtime alerts.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
