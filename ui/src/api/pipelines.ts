@@ -167,6 +167,11 @@ export interface PipelineCaseDetail {
     terminalChildCount: number;
     loadedChildren: number;
   };
+  parentCase?: {
+    case: PipelineCase;
+    stage: PipelineStage;
+    pipeline: { id: string; key: string; name: string };
+  } | null;
   pendingSuggestion?: PipelineCasePendingSuggestion | null;
 }
 
@@ -207,6 +212,15 @@ export interface PipelineCaseEvent {
   fromStageId?: string | null;
   toStageId?: string | null;
   payload?: Record<string, unknown> | null;
+  fromStage?: { id: string; key: string; name: string; kind: string } | null;
+  toStage?: { id: string; key: string; name: string; kind: string } | null;
+  actorAgent?: { id: string; name: string } | null;
+  automation?: {
+    routine: { id: string; title: string } | null;
+    issue: { id: string; identifier: string | null; title: string; status: string } | null;
+    routineRunId?: string | null;
+    stage?: { id: string; key: string; name: string; kind: string } | null;
+  };
   createdAt: Date | string;
   updatedAt: Date | string;
 }

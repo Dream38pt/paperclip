@@ -422,6 +422,84 @@ describeEmbeddedPostgres("pipelineService", () => {
     });
   });
 
+  it("enriches case event pages with actors, stages, and automation targets", async () => {
+    const { company, pipeline, byKey } = await seedPipeline();
+    const routine = await seedRoutine(company.id, "Draft announcement");
+    const draftingStage = await svc.updateStage({
+      companyId: company.id,
+      pipelineId: pipeline.id,
+      stageId: byKey.get("in_progress")!.id,
+      patch: {
+        config: { onEnter: { type: "run_routine", id: "draft-on-enter", routineId: routine.id } },
+      },
+      actor: userActor,
+    });
+    const created = await svc.ingestCase({
+      companyId: company.id,
+      pipelineId: pipeline.id,
+      caseKey: "event-enrichment",
+      title: "Event enrichment",
+      actor: userActor,
+    });
+    const issue = await seedLinkedIssue({
+      companyId: company.id,
+      caseId: created.case.id,
+      role: "automation",
+      title: "Draft the announcement",
+    });
+    const [actorAgent] = await db.insert(agents).values({
+      companyId: company.id,
+      name: "Dotta",
+      role: "engineer",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    }).returning();
+
+    await db.insert(pipelineCaseEvents).values([
+      {
+        companyId: company.id,
+        caseId: created.case.id,
+        type: "transitioned",
+        actorType: "agent",
+        actorAgentId: actorAgent!.id,
+        runId: randomUUID(),
+        fromStageId: created.case.stageId,
+        toStageId: draftingStage.id,
+        payload: { reason: "Start content intake", transitionClass: "manual" },
+      },
+      {
+        companyId: company.id,
+        caseId: created.case.id,
+        type: "automation_executed",
+        actorType: "system",
+        payload: {
+          automationId: "draft-on-enter",
+          routineId: routine.id,
+          routineRunId: randomUUID(),
+          issueId: issue.id,
+        },
+      },
+    ]);
+
+    const page = await svc.listCaseEventsPage(company.id, created.case.id, { limit: 10 });
+    const transition = page.items.find((event) => event.type === "transitioned");
+    expect(transition).toMatchObject({
+      fromStage: { id: created.case.stageId, name: "Intake" },
+      toStage: { id: draftingStage.id, name: "In progress" },
+      actorAgent: { id: actorAgent!.id, name: "Dotta" },
+    });
+    const automation = page.items.find((event) => event.type === "automation_executed");
+    expect(automation).toMatchObject({
+      automation: {
+        routine: { id: routine.id, title: "Draft announcement" },
+        issue: { id: issue.id, title: "Draft the announcement" },
+        stage: { id: draftingStage.id, name: "In progress" },
+      },
+    });
+  });
+
   it("rejects disabled stages for ingest, transition, suggestion resolution, and auto-advance", async () => {
     const { company, pipeline, byKey } = await seedPipeline();
     await svc.updateStage({

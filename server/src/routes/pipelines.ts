@@ -1396,13 +1396,28 @@ async function getCaseDetail(db: Db, companyId: string, caseId: string) {
     .limit(1)
     .then((rows) => rows[0] ?? null);
   if (!row) throw notFound("Pipeline case not found");
-  const [allowedNextStages, links, blockers, blocks, childrenCounts, activeWorkByCase] = await Promise.all([
+  const parentCasePromise = row.case.parentCaseId
+    ? db
+      .select({ case: pipelineCases, stage: pipelineStages, pipeline: pipelines })
+      .from(pipelineCases)
+      .innerJoin(pipelineStages, eq(pipelineCases.stageId, pipelineStages.id))
+      .innerJoin(pipelines, eq(pipelineCases.pipelineId, pipelines.id))
+      .where(and(
+        eq(pipelineCases.companyId, companyId),
+        eq(pipelineCases.id, row.case.parentCaseId),
+        eq(pipelines.companyId, companyId),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null)
+    : Promise.resolve(null);
+  const [allowedNextStages, links, blockers, blocks, childrenCounts, activeWorkByCase, parentCase] = await Promise.all([
     db.select().from(pipelineStages).where(eq(pipelineStages.pipelineId, row.case.pipelineId)).orderBy(asc(pipelineStages.position)),
     db.select().from(pipelineCaseIssueLinks).where(and(eq(pipelineCaseIssueLinks.companyId, companyId), eq(pipelineCaseIssueLinks.caseId, caseId))),
     db.select().from(pipelineCaseBlockers).where(and(eq(pipelineCaseBlockers.companyId, companyId), eq(pipelineCaseBlockers.caseId, caseId))),
     db.select().from(pipelineCaseBlockers).where(and(eq(pipelineCaseBlockers.companyId, companyId), eq(pipelineCaseBlockers.blockedByCaseId, caseId))),
     getDirectChildrenSummary(db, companyId, caseId),
     loadActiveWorkForCases(db, companyId, [caseId]),
+    parentCasePromise,
   ]);
   return {
     ...row,
@@ -1420,6 +1435,7 @@ async function getCaseDetail(db: Db, companyId: string, caseId: string) {
       ...childrenCounts,
     },
     activeWork: activeWorkByCase.get(caseId) ?? null,
+    parentCase,
     pendingSuggestion: row.case.pendingSuggestion,
   };
 }

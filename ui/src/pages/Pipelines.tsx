@@ -1608,6 +1608,8 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
   const statusLabel = humanizePipelineItemStatus(detail.case.terminalKind ?? detail.stage.kind);
   const childRows = normalizePipelineChildRows(children.data);
   const eventRows = events.data?.items ?? [];
+  const waitingChildren = getWaitingChildren(childRows);
+  const childrenGate = hasChildrenGate(detail.stage);
   const changedNotice = itemHasChangedNotice(detail.case) ?? changedNoticeFromEvents(eventRows);
   const primaryAction = conversationLink
     ? (
@@ -1641,6 +1643,17 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
             </span>
           </div>
           {detail.case.summary ? <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{detail.case.summary}</p> : null}
+          {detail.parentCase ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Built for{" "}
+              <Link
+                to={`/pipelines/${detail.parentCase.case.pipelineId}/items/${detail.parentCase.case.id}`}
+                className="font-medium text-foreground hover:underline"
+              >
+                {detail.parentCase.pipeline.name}: {detail.parentCase.case.title}
+              </Link>
+            </p>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {primaryAction}
@@ -1717,6 +1730,28 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
         </section>
       ) : null}
 
+      {childrenGate && waitingChildren.length > 0 ? (
+        <section className="mb-5 border-y border-border bg-muted/20 py-4">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <ListTree className="h-4 w-4 text-muted-foreground" />
+              Waiting on {waitingChildren.length} of {detail.childrenSummary.childCount} child {detail.childrenSummary.childCount === 1 ? "item" : "items"}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              {waitingChildren.map((row) => (
+                <Link
+                  key={row.case.id}
+                  to={`/pipelines/${row.case.pipelineId}/items/${row.case.id}`}
+                  className="text-foreground hover:underline"
+                >
+                  {row.case.title} ({humanizePipelineItemStatus(row.case.terminalKind ?? row.stage.kind).toLowerCase()})
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
         <main className="space-y-8">
           <DetailSection title="Conversation">
@@ -1780,7 +1815,9 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
               <ol className="divide-y divide-border">
                 {eventRows.map((event) => (
                   <li key={event.id} className="py-2 text-sm">
-                    <p className="text-foreground">{formatPipelineItemEvent(event, stageLookup)}</p>
+                    <p className="text-foreground">
+                      <PipelineEventText event={event} pipelineId={pipelineId} stages={stageLookup} />
+                    </p>
                     <time className="text-xs text-muted-foreground">{formatShortDate(event.createdAt)}</time>
                   </li>
                 ))}
@@ -1810,6 +1847,67 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
       </Dialog>
     </div>
   );
+}
+
+function hasChildrenGate(stage: PipelineStage) {
+  const config = stage.config ?? {};
+  return config.requireChildrenTerminal === true ||
+    (typeof config.autoAdvanceOnChildrenTerminal === "string" && config.autoAdvanceOnChildrenTerminal.trim().length > 0);
+}
+
+function isTerminalChild(row: { case: PipelineCase; stage: PipelineStage }) {
+  return Boolean(row.case.terminalKind) || row.stage.kind === "done" || row.stage.kind === "cancelled";
+}
+
+function getWaitingChildren(rows: Array<{ case: PipelineCase; stage: PipelineStage }>) {
+  return rows.filter((row) => !isTerminalChild(row));
+}
+
+function PipelineEventText({
+  event,
+  pipelineId,
+  stages,
+}: {
+  event: PipelineCaseEvent;
+  pipelineId: string;
+  stages: Map<string, string>;
+}) {
+  const kind = event.type.startsWith("case.") ? event.type.slice("case.".length) : event.type;
+  if (kind === "automation_executed" && event.automation) {
+    const routineName = event.automation.routine?.title ?? "the automation";
+    const issue = event.automation.issue;
+    return (
+      <>
+        Automation completed — ran <span className="font-medium">{routineName}</span>
+        {issue ? (
+          <>
+            {" -> "}
+            <Link to={`/issues/${issue.id}`} className="font-medium text-foreground hover:underline">
+              {issue.identifier ?? issue.title}
+            </Link>
+          </>
+        ) : null}
+        .
+      </>
+    );
+  }
+  if (kind === "automation_failed") {
+    const stageId = event.automation?.stage?.id ?? event.toStageId ?? null;
+    return (
+      <>
+        {formatPipelineItemEvent(event, stages)}
+        {stageId ? (
+          <>
+            {" "}
+            <Link to={`/pipelines/${pipelineId}/settings?stage=${stageId}`} className="font-medium text-foreground hover:underline">
+              Fix stage settings
+            </Link>
+          </>
+        ) : null}
+      </>
+    );
+  }
+  return <>{formatPipelineItemEvent(event, stages)}</>;
 }
 
 function DetailSection({ title, children }: { title: string; children: ReactNode }) {

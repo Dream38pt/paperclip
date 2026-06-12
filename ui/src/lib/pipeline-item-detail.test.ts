@@ -94,7 +94,16 @@ describe("pipeline item detail helpers", () => {
     const cases: Array<[PipelineCaseEvent, string]> = [
       [event("case.ingested"), "Item added."],
       [event("case.updated"), "Item details updated."],
-      [event("case.transitioned", {}, { fromStageId: "stage-intake", toStageId: "stage-review" }), "Moved from Intake to Review."],
+      [event("case.transitioned", { reason: "Start content intake", transitionClass: "manual" }, {
+        fromStageId: "stage-intake",
+        toStageId: "stage-review",
+        actorType: "agent",
+        actorAgent: { id: "agent-1", name: "Dotta" },
+      }), "Moved from Intake to Review — Dotta: 'Start content intake'."],
+      [event("case.transitioned", { reason: "children_terminal", transitionClass: "auto" }, {
+        toStageId: "stage-done",
+        actorType: "system",
+      }), "Moved to Done — automatic (all child items done)."],
       [event("case.suggested", { suggestion: { toStageKey: "review" } }), "Suggested moving to Review."],
       [event("case.suggestion_resolved", { decision: "accept" }), "Suggestion approved."],
       [event("case.suggestion_resolved", { decision: "dismiss" }), "Suggestion dismissed."],
@@ -104,6 +113,14 @@ describe("pipeline item detail helpers", () => {
       [event("upstream_drift", { upstreamCaseKey: "BLOG-12" }), "Upstream change detected from BLOG-12."],
       [event("upstream_drift"), "Upstream change detected."],
       [event("drift_acknowledged"), "Upstream change acknowledged."],
+      [event("automation_executed", {}, {
+        automation: {
+          routine: { id: "routine-1", title: "Draft announcement" },
+          issue: { id: "issue-1", identifier: "PAP-42", title: "Draft the announcement", status: "todo" },
+          routineRunId: "run-1",
+        },
+      }), "Automation completed — ran Draft announcement -> PAP-42."],
+      [event("automation_failed", { error: "automation_not_configured" }), "Automation needs attention — automation not configured."],
       [event("case.unknown_kind"), "Activity recorded."],
     ];
 

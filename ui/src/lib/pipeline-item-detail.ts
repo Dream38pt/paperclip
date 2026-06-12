@@ -208,13 +208,47 @@ export function changedNoticeFromEvents(events: PipelineCaseEvent[]) {
   };
 }
 
-function stageName(event: Pick<PipelineCaseEvent, "fromStageId" | "toStageId">, stages: StageLookup, side: "from" | "to") {
+function stageName(event: PipelineCaseEvent, stages: StageLookup, side: "from" | "to") {
+  const enrichedStage = side === "from" ? event.fromStage : event.toStage;
+  if (enrichedStage?.name) return enrichedStage.name;
   const stageId = side === "from" ? event.fromStageId : event.toStageId;
   return stageNameFromLookup(stages, stageId ?? undefined);
 }
 
 function readDecision(payload: Record<string, unknown>) {
   return readString(payload.decision)?.toLowerCase() ?? null;
+}
+
+function actorName(event: PipelineCaseEvent) {
+  if (event.actorAgent?.name) return event.actorAgent.name;
+  if (event.actorType === "user") return "Board";
+  if (event.actorType === "system") return "Paperclip";
+  return null;
+}
+
+function movementReason(payload: Record<string, unknown>) {
+  const reason = readString(payload.reason);
+  if (!reason) return null;
+  if (reason === "children_terminal") return "all child items done";
+  return reason;
+}
+
+function movementClass(event: PipelineCaseEvent, payload: Record<string, unknown>) {
+  const raw = readString(payload.transitionClass)?.toLowerCase();
+  if (raw === "auto" || raw === "automatic") return "automatic";
+  if (raw === "manual") return "manual";
+  if (event.actorType === "system" && readString(payload.reason) === "children_terminal") return "automatic";
+  return raw;
+}
+
+function automationIssueLabel(event: PipelineCaseEvent) {
+  const issue = event.automation?.issue;
+  if (!issue) return null;
+  return issue.identifier ?? issue.title;
+}
+
+function humanizeReason(reason: string) {
+  return humanizeKey(reason).replace(/^./, (char) => char.toLowerCase());
 }
 
 export function formatPipelineItemEvent(event: PipelineCaseEvent, stages?: StageLookup) {
@@ -225,9 +259,17 @@ export function formatPipelineItemEvent(event: PipelineCaseEvent, stages?: Stage
   if (kind === "transitioned") {
     const from = stageName(event, stages, "from");
     const to = stageName(event, stages, "to");
-    if (from && to) return `Moved from ${from} to ${to}.`;
-    if (to) return `Moved to ${to}.`;
-    return "Moved to another stage.";
+    const movement = from && to ? `Moved from ${from} to ${to}` : to ? `Moved to ${to}` : "Moved to another stage";
+    const reason = movementReason(payload);
+    const transitionClass = movementClass(event, payload);
+    if (transitionClass === "automatic") {
+      return `${movement} — automatic${reason ? ` (${reason})` : ""}.`;
+    }
+    const actor = actorName(event);
+    if (reason && actor) return `${movement} — ${actor}: '${reason}'.`;
+    if (reason) return `${movement} — '${reason}'.`;
+    if (actor && event.actorType !== "system") return `${movement} — ${actor}.`;
+    return `${movement}.`;
   }
   if (kind === "suggested" || kind === "transition_suggested") {
     const suggestion = readRecord(payload.suggestion);
@@ -260,8 +302,15 @@ export function formatPipelineItemEvent(event: PipelineCaseEvent, stages?: Stage
     return "Upstream change detected.";
   }
   if (kind === "drift_acknowledged") return "Upstream change acknowledged.";
-  if (kind === "automation_executed") return "Automation completed.";
-  if (kind === "automation_failed") return "Automation needs attention.";
+  if (kind === "automation_executed") {
+    const routineName = event.automation?.routine?.title ?? "the automation";
+    const issueLabel = automationIssueLabel(event);
+    return `Automation completed — ran ${routineName}${issueLabel ? ` -> ${issueLabel}` : ""}.`;
+  }
+  if (kind === "automation_failed") {
+    const reason = readString(payload.error);
+    return `Automation needs attention${reason ? ` — ${humanizeReason(reason)}` : ""}.`;
+  }
   if (kind === "claimed") return "Work started.";
   if (kind === "lease_released" || kind === "lease_expired") return "Work handoff cleared.";
   return "Activity recorded.";

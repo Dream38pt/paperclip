@@ -16,7 +16,15 @@ interface FixtureOptions {
 
 const STAGES = [
   { id: "stage-intake", pipelineId: PIPELINE_ID, key: "intake", name: "Intake", kind: "open", position: 100 },
-  { id: "stage-review", pipelineId: PIPELINE_ID, key: "review", name: "Review", kind: "review", position: 200 },
+  {
+    id: "stage-review",
+    pipelineId: PIPELINE_ID,
+    key: "review",
+    name: "Review",
+    kind: "review",
+    position: 200,
+    config: { requireChildrenTerminal: true, autoAdvanceOnChildrenTerminal: "done" },
+  },
   { id: "stage-done", pipelineId: PIPELINE_ID, key: "done", name: "Done", kind: "done", position: 800 },
   { id: "stage-cancelled", pipelineId: PIPELINE_ID, key: "cancelled", name: "Removed", kind: "cancelled", position: 1000 },
 ];
@@ -92,6 +100,19 @@ const CHILD_ROWS = [
     },
     stage: STAGES[2],
   },
+  {
+    case: {
+      id: "child-3",
+      companyId: COMPANY_ID,
+      pipelineId: PIPELINE_ID,
+      stageId: "stage-cancelled",
+      title: "Audience notes",
+      fields: {},
+      childCount: 0,
+      terminalKind: "cancelled",
+    },
+    stage: STAGES[3],
+  },
 ];
 
 const EVENTS = [
@@ -111,11 +132,33 @@ const EVENTS = [
     caseId: CASE_ID,
     type: "case.transitioned",
     actorType: "agent",
-    payload: {},
+    actorAgent: { id: "agent-copy", name: "Dotta" },
+    payload: { reason: "Start content intake for v0.42", transitionClass: "manual" },
     fromStageId: "stage-intake",
     toStageId: "stage-review",
     createdAt: "2026-06-10T09:00:00.000Z",
     updatedAt: "2026-06-10T09:00:00.000Z",
+  },
+  {
+    id: "ev-automation",
+    companyId: COMPANY_ID,
+    caseId: CASE_ID,
+    type: "automation_executed",
+    actorType: "system",
+    payload: { routineId: "routine-1", routineRunId: "routine-run-1", issueId: "issue-auto-1" },
+    automation: {
+      routine: { id: "routine-1", title: "Draft announcement" },
+      issue: {
+        id: "issue-auto-1",
+        identifier: "PAP-1001",
+        title: "Draft the launch announcement",
+        status: "todo",
+      },
+      routineRunId: "routine-run-1",
+      stage: { id: "stage-review", key: "review", name: "Review", kind: "review" },
+    },
+    createdAt: "2026-06-10T10:20:00.000Z",
+    updatedAt: "2026-06-10T10:20:00.000Z",
   },
   {
     id: "ev-3",
@@ -193,7 +236,7 @@ function buildCaseDetail(options: FixtureOptions) {
       version: 4,
       terminalKind: null,
       childCount: options.withChildren ? CHILD_ROWS.length : 0,
-      terminalChildCount: 0,
+      terminalChildCount: options.withChildren ? 2 : 0,
       pendingSuggestion: options.pendingSuggestion
         ? {
             id: "suggestion-1",
@@ -211,7 +254,7 @@ function buildCaseDetail(options: FixtureOptions) {
     blocks: [],
     childrenSummary: {
       childCount: options.withChildren ? CHILD_ROWS.length : 0,
-      terminalChildCount: 0,
+      terminalChildCount: options.withChildren ? 2 : 0,
       loadedChildren: options.withChildren ? CHILD_ROWS.length : 0,
     },
     pendingSuggestion: null,
