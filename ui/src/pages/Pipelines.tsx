@@ -2102,7 +2102,7 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
                 {itemFields.map((field) => (
                   <div key={field.key} className="grid grid-cols-[120px_1fr] gap-3 py-2 text-sm">
                     <dt className="text-muted-foreground">{field.label}</dt>
-                    <dd className="min-w-0 text-foreground">{field.value}</dd>
+                    <dd className="min-w-0 text-foreground [overflow-wrap:anywhere]">{field.value}</dd>
                   </div>
                 ))}
               </dl>

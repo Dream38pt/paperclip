@@ -402,6 +402,9 @@ describe("PipelineItemDetailView", () => {
 
   it("renders the item description as full markdown", async () => {
     const { container, root } = await renderItemPage(itemDetail({
+      fields: {
+        verified_event_types: "ingested,updated,automation_executed,transitioned,review_decided",
+      },
       summary: [
         "### Acceptance",
         "",
@@ -422,6 +425,9 @@ describe("PipelineItemDetailView", () => {
       "Keep uploaded images visible",
     ]);
     expect(container.querySelector('img[src="/api/assets/asset-1/content"]')).not.toBeNull();
+    const sidebarValue = Array.from(container.querySelectorAll("dd"))
+      .find((element) => element.textContent === "ingested,updated,automation_executed,transitioned,review_decided");
+    expect(sidebarValue?.className).toContain("[overflow-wrap:anywhere]");
 
     act(() => {
       root.unmount();
