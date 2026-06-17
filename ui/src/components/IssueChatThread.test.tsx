@@ -12,6 +12,7 @@ import {
   VIRTUALIZED_THREAD_ROW_THRESHOLD,
   canStopIssueChatRun,
   findLatestCommentMessageIndex,
+  getVirtualizedMeasurementScrollAdjustment,
   resolveAssistantMessageFoldedState,
   resolveIssueChatHumanAuthor,
 } from "./IssueChatThread";
@@ -1210,6 +1211,31 @@ describe("IssueChatThread", () => {
     act(() => {
       root.unmount();
     });
+  });
+
+  it("keeps the viewport anchored when virtualized rows above it remeasure", () => {
+    expect(getVirtualizedMeasurementScrollAdjustment({
+      itemStart: 200,
+      previousSize: 220,
+      nextSize: 360,
+      viewportStart: 480,
+    })).toBe(140);
+
+    expect(getVirtualizedMeasurementScrollAdjustment({
+      itemStart: 200,
+      previousSize: 360,
+      nextSize: 180,
+      viewportStart: 620,
+    })).toBe(-180);
+  });
+
+  it("does not scroll-anchor virtualized measurement changes inside the viewport", () => {
+    expect(getVirtualizedMeasurementScrollAdjustment({
+      itemStart: 420,
+      previousSize: 220,
+      nextSize: 360,
+      viewportStart: 480,
+    })).toBe(0);
   });
 
   it("renders virtualized rows with the same role/kind metadata as the direct path", () => {

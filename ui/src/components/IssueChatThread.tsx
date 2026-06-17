@@ -2881,6 +2881,18 @@ type SimpleVirtualItem = {
   size: number;
 };
 
+export function getVirtualizedMeasurementScrollAdjustment(args: {
+  itemStart: number;
+  previousSize: number;
+  nextSize: number;
+  viewportStart: number;
+}) {
+  const { itemStart, previousSize, nextSize, viewportStart } = args;
+  const previousEnd = itemStart + previousSize;
+  if (previousEnd > viewportStart) return 0;
+  return nextSize - previousSize;
+}
+
 function useIssueThreadVirtualizer({
   count,
   estimateSize,
@@ -2995,7 +3007,20 @@ function useIssueThreadVirtualizer({
       const key = getItemKey(index);
       const previousSize = measuredSizeByKeyRef.current.get(key) ?? estimatedSize;
       if (Math.abs(previousSize - measuredSize) < 1) return;
+      const scrollAdjustment = getVirtualizedMeasurementScrollAdjustment({
+        itemStart: itemStarts[index] ?? scrollMargin,
+        previousSize,
+        nextSize: measuredSize,
+        viewportStart: Math.max(scrollMargin, scrollOffset()),
+      });
       measuredSizeByKeyRef.current.set(key, measuredSize);
+      if (Math.abs(scrollAdjustment) >= 1) {
+        if (mode.kind === "window") {
+          window.scrollBy({ top: scrollAdjustment, behavior: "auto" });
+        } else {
+          mode.element.scrollBy({ top: scrollAdjustment, behavior: "auto" });
+        }
+      }
       rerender((value) => value + 1);
     },
   };
