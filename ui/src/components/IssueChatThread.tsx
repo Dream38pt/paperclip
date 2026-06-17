@@ -25,6 +25,7 @@ import {
   type ChangeEvent,
   type DragEvent as ReactDragEvent,
   type ErrorInfo,
+  type KeyboardEvent as ReactKeyboardEvent,
   type Ref,
   type ReactNode,
 } from "react";
@@ -3389,6 +3390,23 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
     });
   }
 
+  function togglePendingWorkMode() {
+    setPendingWorkMode((prev) => (prev === "planning" ? "standard" : "planning"));
+    setWorkModeMenuOpen(false);
+  }
+
+  function handleComposerKeyDown(evt: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!canToggleWorkMode) return;
+    if (!(evt.metaKey || evt.ctrlKey)) return;
+    if (evt.altKey || evt.shiftKey) return;
+    if (evt.key !== "." && evt.code !== "Period") return;
+    if (evt.nativeEvent.isComposing) return;
+
+    evt.preventDefault();
+    evt.stopPropagation();
+    togglePendingWorkMode();
+  }
+
   useEffect(() => {
     if (!draftKey) return;
     setBody(loadDraft(draftKey));
@@ -3696,6 +3714,7 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
       onDragOverCapture={handleFileDragOver}
       onDragLeaveCapture={handleFileDragLeave}
       onDropCapture={handleFileDrop}
+      onKeyDownCapture={handleComposerKeyDown}
     >
       {isDragOver && canAcceptFiles ? (
         <div
@@ -3861,10 +3880,7 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
                     "flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/50",
                     isPlanning ? "text-foreground" : "text-amber-700 dark:text-amber-300",
                   )}
-                  onClick={() => {
-                    setPendingWorkMode((prev) => (prev === "planning" ? "standard" : "planning"));
-                    setWorkModeMenuOpen(false);
-                  }}
+                  onClick={togglePendingWorkMode}
                 >
                   {isPlanning ? (
                     <Hammer className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
