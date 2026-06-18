@@ -1162,6 +1162,7 @@ export function taskWatchdogService(db: Db, deps: TaskWatchdogServiceDeps = {}) 
         checked: 0,
         triggered: 0,
         live: 0,
+        pendingFirstRun: 0,
         alreadyReviewed: 0,
         skipped: 0,
         watchdogIssueIds: [] as string[],
@@ -1174,6 +1175,8 @@ export function taskWatchdogService(db: Db, deps: TaskWatchdogServiceDeps = {}) 
           result.watchdogIssueIds.push(evaluated.watchdogIssueId);
         } else if (evaluated.state === "live" || evaluated.state === "watchdog_live") {
           result.live += 1;
+        } else if (evaluated.state === "pending_first_run") {
+          result.pendingFirstRun += 1;
         } else if (evaluated.state === "already_reviewed") {
           result.alreadyReviewed += 1;
         } else {
@@ -1192,6 +1195,7 @@ export function taskWatchdogService(db: Db, deps: TaskWatchdogServiceDeps = {}) 
       const result = {
         checked: 0,
         triggered: 0,
+        pendingFirstRun: 0,
         skipped: 0,
         watchdogIssueIds: [] as string[],
       };
@@ -1201,6 +1205,8 @@ export function taskWatchdogService(db: Db, deps: TaskWatchdogServiceDeps = {}) 
         if (evaluated.state === "triggered") {
           result.triggered += 1;
           result.watchdogIssueIds.push(evaluated.watchdogIssueId);
+        } else if (evaluated.state === "pending_first_run") {
+          result.pendingFirstRun += 1;
         } else {
           result.skipped += 1;
         }

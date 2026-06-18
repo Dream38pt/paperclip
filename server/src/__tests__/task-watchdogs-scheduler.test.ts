@@ -184,6 +184,34 @@ describeEmbeddedPostgres("task watchdog scheduler", () => {
     expect(watchdogIssues).toHaveLength(0);
   });
 
+  it("does not trigger while a descendant has a queued assignment wake", async () => {
+    const companyId = await seedCompany();
+    const sourceId = await seedIssue(companyId, { identifier: "WDOG-WAKE", status: "in_progress" });
+    const childId = await seedIssue(companyId, { parentId: sourceId, status: "todo" });
+    const agentId = await seedAgent(companyId);
+    await seedWatchdog(companyId, sourceId, agentId);
+    await db.insert(agentWakeupRequests).values({
+      companyId,
+      agentId,
+      status: "queued",
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId: childId },
+    });
+    const { service, wakes } = createService();
+
+    const result = await service.reconcileTaskWatchdogs({ companyId });
+
+    expect(result).toMatchObject({ checked: 1, triggered: 0, live: 1 });
+    expect(wakes).toHaveLength(0);
+    const watchdogIssues = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "task_watchdog")));
+    expect(watchdogIssues).toHaveLength(0);
+  });
+
   it("marks a completed watchdog fingerprint reviewed, then reuses the same issue for a later stopped state", async () => {
     const companyId = await seedCompany();
     const sourceId = await seedIssue(companyId, { identifier: "WDOG-3", status: "done" });
@@ -239,7 +267,7 @@ describeEmbeddedPostgres("task watchdog scheduler", () => {
 
     const result = await service.reconcileTaskWatchdogs({ companyId });
 
-    expect(result).toMatchObject({ checked: 1, triggered: 0 });
+    expect(result).toMatchObject({ checked: 1, triggered: 0, pendingFirstRun: 1 });
     expect(wakes).toHaveLength(0);
     const watchdogIssues = await db
       .select({ id: issues.id })

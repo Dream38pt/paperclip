@@ -159,6 +159,18 @@ describe("task watchdog subtree classifier", () => {
     expect(result).toMatchObject({ state: "live", liveIssueIds: [sourceId] });
   });
 
+  it("treats a queued assignment wake inside the create-race window as live", () => {
+    const createdAt = new Date("2026-06-18T16:32:45.731Z");
+    const result = classify({
+      issues: [issue({ status: "todo", createdAt })],
+      queuedWakeRequests: [{ companyId, issueId: sourceId, agentId: "agent-1", status: "queued" }],
+      evaluatedAt: new Date("2026-06-18T16:32:45.835Z"),
+      firstRunGraceMs: 15_000,
+    });
+
+    expect(result).toMatchObject({ state: "live", liveIssueIds: [sourceId] });
+  });
+
   it("triggers a genuinely idle assigned issue once the grace window has elapsed", () => {
     const createdAt = new Date("2026-06-18T16:32:45.731Z");
     const result = classify({

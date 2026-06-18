@@ -187,6 +187,18 @@ describeEmbeddedPostgres("issue watchdog routes", () => {
     return runId;
   }
 
+  async function waitForAssignmentWakeup(companyId: string) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const rows = await db
+        .select({ id: heartbeatRuns.id })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.companyId, companyId))
+        .limit(1);
+      if (rows.length > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
   it("creates, updates, reads, lists, and removes an issue watchdog with activity logs", async () => {
     const companyId = await seedCompany();
     const issueId = await seedIssue(companyId, { identifier: "WDOG-1", issueNumber: 1 });
@@ -298,6 +310,53 @@ describeEmbeddedPostgres("issue watchdog routes", () => {
       .from(activityLog)
       .where(eq(activityLog.entityId, res.body.id));
     expect(activityRows.map((row) => row.action)).toContain("issue.watchdog_created");
+  });
+
+  it("does not create an immediate watchdog review for a newly assigned issue", async () => {
+    const companyId = await seedCompany();
+    const workerAgentId = await seedAgent(companyId, { name: "Worker" });
+    const watchdogAgentId = await seedAgent(companyId, { name: "Watchdog" });
+    const app = createApp(companyId);
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/issues`)
+      .send({
+        title: "Assigned issue with watchdog",
+        assigneeAgentId: workerAgentId,
+        watchdog: {
+          agentId: watchdogAgentId,
+          instructions: "Confirm whether the worker got started.",
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    await waitForAssignmentWakeup(companyId);
+    expect(res.body).toMatchObject({
+      assigneeAgentId: workerAgentId,
+      watchdog: {
+        issueId: res.body.id,
+        watchdogAgentId,
+        status: "active",
+      },
+    });
+
+    const watchdogReviewIssues = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "task_watchdog")));
+    expect(watchdogReviewIssues).toHaveLength(0);
+
+    const [watchdog] = await db
+      .select()
+      .from(issueWatchdogs)
+      .where(and(eq(issueWatchdogs.companyId, companyId), eq(issueWatchdogs.issueId, res.body.id)));
+    expect(watchdog?.triggerCount).toBe(0);
+
+    const taskWatchdogActivity = await db
+      .select({ action: activityLog.action })
+      .from(activityLog)
+      .where(and(eq(activityLog.entityId, res.body.id), eq(activityLog.action, "issue.task_watchdog_triggered")));
+    expect(taskWatchdogActivity).toHaveLength(0);
   });
 
   it("enforces persisted watchdog scope for issue mutations and child creation", async () => {
