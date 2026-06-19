@@ -1200,6 +1200,59 @@ describeEmbeddedPostgres("pipeline routes", () => {
       latestRevisionNumber: 2,
     });
 
+    const reconciled = await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}`)
+      .send({
+        config: {
+          ...synced.body.config,
+          variables: [
+            {
+              name: "old_topic",
+              label: "Topic",
+              type: "select",
+              defaultValue: "urgent",
+              required: false,
+              options: ["urgent", "later"],
+            },
+            {
+              name: "ne",
+              label: "Intermediate",
+              type: "text",
+              defaultValue: null,
+              required: true,
+              options: [],
+            },
+            {
+              name: "customer",
+              label: "Customer",
+              type: "text",
+              defaultValue: null,
+              required: true,
+              options: [],
+              source: "manual",
+            },
+          ],
+          automation: {
+            assigneeAgentId: secondAgent!.id,
+            instructionsBody: "Review {{new_topic}}.",
+          },
+        },
+      })
+      .expect(200);
+    expect(reconciled.body.config.variables.map((variable: { name: string }) => variable.name)).toEqual([
+      "new_topic",
+      "customer",
+    ]);
+    expect(JSON.stringify(reconciled.body.config.variables)).not.toContain("source");
+
+    const [stageAfterReconcile] = await db.select().from(pipelineStages).where(eq(pipelineStages.id, stage.id));
+    expect((stageAfterReconcile!.config as { variables: Array<{ name: string }> }).variables.map((variable) => variable.name)).toEqual([
+      "new_topic",
+      "customer",
+    ]);
+    [routine] = await db.select().from(routines).where(eq(routines.id, routineId));
+    expect(routine!.variables.map((variable) => variable.name)).toEqual(["new_topic"]);
+
     const unwired = await http
       .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}`)
       .send({

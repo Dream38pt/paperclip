@@ -74,13 +74,60 @@ function defaultRoutineVariable(name: string): RoutineVariable {
   };
 }
 
+export type ReconcileRoutineVariablesOptions = {
+  /**
+   * Variables listed here are user-authored fields, not template-derived
+   * placeholders. They are preserved when the template changes.
+   */
+  manualVariableNames?: Iterable<string>;
+};
+
+function variableNames(value: RoutineVariable[] | null | undefined): Set<string> {
+  return new Set((value ?? []).map((variable) => variable.name));
+}
+
+export function reconcileRoutineVariablesWithTemplate(
+  template: RoutineTemplateInput,
+  existing: RoutineVariable[] | null | undefined,
+  options: ReconcileRoutineVariablesOptions = {},
+): RoutineVariable[] {
+  const names = extractRoutineVariableNames(template).filter((name) => !isBuiltinRoutineVariable(name));
+  const nextNameSet = new Set(names);
+  const existingVariables = existing ?? [];
+  const existingByName = new Map(existingVariables.map((variable) => [variable.name, variable]));
+  const manualNames = new Set(options.manualVariableNames ?? []);
+
+  const missingNames = names.filter((name) => !existingByName.has(name));
+  const removedDerivedVariables = existingVariables.filter((variable) =>
+    !nextNameSet.has(variable.name) && !manualNames.has(variable.name)
+  );
+
+  const carryRenameFrom = missingNames.length === 1 && removedDerivedVariables.length === 1
+    ? removedDerivedVariables[0]
+    : null;
+  const carryRenameTo = carryRenameFrom ? missingNames[0] : null;
+
+  const reconciled = names.map((name) => {
+    const existingVariable = existingByName.get(name);
+    if (existingVariable) return existingVariable;
+    if (carryRenameFrom && name === carryRenameTo) {
+      return { ...carryRenameFrom, name };
+    }
+    return defaultRoutineVariable(name);
+  });
+
+  const reconciledNames = variableNames(reconciled);
+  const manualVariables = existingVariables.filter((variable) =>
+    manualNames.has(variable.name) && !reconciledNames.has(variable.name)
+  );
+  return [...reconciled, ...manualVariables];
+}
+
 export function syncRoutineVariablesWithTemplate(
   template: RoutineTemplateInput,
   existing: RoutineVariable[] | null | undefined,
 ): RoutineVariable[] {
-  const names = extractRoutineVariableNames(template).filter((name) => !isBuiltinRoutineVariable(name));
-  const existingByName = new Map((existing ?? []).map((variable) => [variable.name, variable]));
-  return names.map((name) => existingByName.get(name) ?? defaultRoutineVariable(name));
+  return reconcileRoutineVariablesWithTemplate(template, existing);
 }
 
 export function stringifyRoutineVariableValue(value: unknown): string {

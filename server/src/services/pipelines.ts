@@ -20,6 +20,9 @@ import {
   routines,
 } from "@paperclipai/db";
 import {
+  extractRoutineVariableNames,
+  isBuiltinRoutineVariable,
+  reconcileRoutineVariablesWithTemplate,
   syncRoutineVariablesWithTemplate,
   type EnvBinding,
   type PipelineAutomationRetryCleanupOptions,
@@ -102,6 +105,7 @@ export type PipelineStageConfig = Record<string, unknown> & {
     options?: unknown;
     required?: unknown;
     showInAddForm?: unknown;
+    source?: unknown;
   }>;
   automation?: {
     routineId?: string | null;
@@ -572,6 +576,12 @@ function persistedStageConfig(config?: PipelineStageConfig | null): PipelineStag
 }
 
 function sanitizePipelineRoutineVariables(raw: PipelineStageConfig["variables"]): RoutineVariable[] {
+  return sanitizePipelineRoutineVariableRecords(raw).map(({ source: _source, ...variable }) => variable);
+}
+
+function sanitizePipelineRoutineVariableRecords(
+  raw: PipelineStageConfig["variables"],
+): Array<RoutineVariable & { source?: "manual" }> {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((variable) => {
     if (!variable || typeof variable !== "object" || Array.isArray(variable)) return [];
@@ -599,8 +609,31 @@ function sanitizePipelineRoutineVariables(raw: PipelineStageConfig["variables"])
       options: Array.isArray(variable.options)
         ? variable.options.filter((option): option is string => typeof option === "string")
         : [],
+      ...(variable.source === "manual" ? { source: "manual" as const } : {}),
     }];
   });
+}
+
+function reconcilePipelineStageConfigVariables(
+  config: PipelineStageConfig,
+  template: Array<string | null | undefined>,
+): PipelineStageConfig {
+  const variables = sanitizePipelineRoutineVariableRecords(config.variables);
+  const templateNames = new Set(
+    extractRoutineVariableNames(template).filter((name) => !isBuiltinRoutineVariable(name)),
+  );
+  const hasManualSourceMarkers = variables.some((variable) => variable.source === "manual");
+  const manualVariableNames = hasManualSourceMarkers
+    ? variables.filter((variable) => variable.source === "manual").map((variable) => variable.name)
+    : variables.filter((variable) => !templateNames.has(variable.name)).map((variable) => variable.name);
+  return {
+    ...config,
+    variables: reconcileRoutineVariablesWithTemplate(
+      template,
+      variables.map(({ source: _source, ...variable }) => variable),
+      { manualVariableNames },
+    ),
+  };
 }
 
 function normalizeStageConfig(kind: PipelineStageKind | string, config?: PipelineStageConfig | null): PipelineStageConfig {
@@ -3123,7 +3156,11 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       const automationRequest = input.patch.config !== undefined
         ? readStageAutomationRequest(input.patch.config)
         : null;
-      const config = normalizeStageConfig(kind, input.patch.config !== undefined ? input.patch.config : stageConfig(existing));
+      const stageName = input.patch.name ?? existing.name;
+      let config = normalizeStageConfig(kind, input.patch.config !== undefined ? input.patch.config : stageConfig(existing));
+      if (automationRequest) {
+        config = reconcilePipelineStageConfigVariables(config, [stageName, automationRequest.instructionsBody]);
+      }
       await validateStageTargets(input.companyId, input.pipelineId, kind, config);
       await validateStageAutomationConfig(input.companyId, config);
       return db.transaction(async (tx) => {
@@ -3131,7 +3168,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
           ? await syncPipelineStageAutomation(tx, {
               companyId: input.companyId,
               pipelineId: input.pipelineId,
-              stage: { ...existing, name: input.patch.name ?? existing.name, kind },
+              stage: { ...existing, name: stageName, kind },
               config,
               assigneeAgentId: automationRequest.assigneeAgentId,
               instructionsBody: automationRequest.instructionsBody,

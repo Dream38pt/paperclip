@@ -5,6 +5,7 @@ import {
   getBuiltinRoutineVariableValues,
   interpolateRoutineTemplate,
   isBuiltinRoutineVariable,
+  reconcileRoutineVariablesWithTemplate,
   syncRoutineVariablesWithTemplate,
 } from "./routine-variables.js";
 
@@ -48,6 +49,55 @@ describe("routine variable helpers", () => {
       syncRoutineVariablesWithTemplate("Review {{customer\\_name}} for {{customer\\_name}}", []),
     ).toEqual([
       { name: "customer_name", label: null, type: "text", defaultValue: null, required: true, options: [] },
+    ]);
+  });
+
+  it("carries settings across a single-placeholder rename", () => {
+    expect(
+      reconcileRoutineVariablesWithTemplate("Review {{new_topic}}", [
+        {
+          name: "old_topic",
+          label: "Topic",
+          type: "select",
+          defaultValue: "urgent",
+          required: false,
+          options: ["urgent", "later"],
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "new_topic",
+        label: "Topic",
+        type: "select",
+        defaultValue: "urgent",
+        required: false,
+        options: ["urgent", "later"],
+      },
+    ]);
+  });
+
+  it("preserves manual variables until explicitly removed", () => {
+    expect(
+      reconcileRoutineVariablesWithTemplate("Review {{topic}}", [
+        { name: "topic", label: "Topic", type: "text", defaultValue: null, required: true, options: [] },
+        { name: "customer", label: "Customer", type: "text", defaultValue: null, required: false, options: [] },
+      ], { manualVariableNames: ["customer"] }),
+    ).toEqual([
+      { name: "topic", label: "Topic", type: "text", defaultValue: null, required: true, options: [] },
+      { name: "customer", label: "Customer", type: "text", defaultValue: null, required: false, options: [] },
+    ]);
+  });
+
+  it("drops stale template-derived variables that no longer appear", () => {
+    expect(
+      reconcileRoutineVariablesWithTemplate("Review {{topic}}", [
+        { name: "topic", label: "Topic", type: "text", defaultValue: null, required: true, options: [] },
+        { name: "old_typing", label: "Old typing", type: "text", defaultValue: null, required: true, options: [] },
+        { name: "customer", label: "Customer", type: "text", defaultValue: null, required: false, options: [] },
+      ], { manualVariableNames: ["customer"] }),
+    ).toEqual([
+      { name: "topic", label: "Topic", type: "text", defaultValue: null, required: true, options: [] },
+      { name: "customer", label: "Customer", type: "text", defaultValue: null, required: false, options: [] },
     ]);
   });
 

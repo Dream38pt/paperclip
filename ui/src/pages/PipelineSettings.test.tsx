@@ -1073,6 +1073,93 @@ describe("PipelineSettings", () => {
     queryClient.clear();
   });
 
+  it("reconciles placeholder renames without saving intermediate field cards", async () => {
+    const renamePipeline = makePipeline();
+    renamePipeline.stages = renamePipeline.stages.map((stage) =>
+      stage.id === "stage-1"
+        ? {
+            ...stage,
+            config: {
+              ...stage.config,
+              variables: [
+                {
+                  name: "old_topic",
+                  label: "Topic",
+                  type: "select",
+                  defaultValue: "urgent",
+                  required: false,
+                  options: ["urgent", "later"],
+                },
+                {
+                  name: "customer",
+                  label: "Customer",
+                  type: "text",
+                  defaultValue: null,
+                  required: true,
+                  options: [],
+                },
+              ],
+              automation: {
+                assigneeAgentId: "agent-1",
+                instructionsBody: "Review {{old_topic}}.",
+              },
+              whatHappensHere: "Review {{old_topic}}.",
+            },
+          }
+        : stage,
+    );
+    (pipelinesApi.get as unknown as { mockResolvedValueOnce: (value: unknown) => void }).mockResolvedValueOnce(
+      renamePipeline,
+    );
+
+    const { container, root, queryClient } = renderSettings();
+    await flushQueries();
+
+    flushSync(() => {
+      findButton(container, "Automation")!.click();
+    });
+
+    const editor = container.querySelector<HTMLTextAreaElement>('[aria-label="Stage instructions"]')!;
+    for (const body of ["Review {{n}}.", "Review {{ne}}.", "Review {{new_topic}}."]) {
+      flushSync(() => {
+        setNativeValue(editor, body);
+      });
+      await flushQueries();
+    }
+
+    expect(container.textContent).toContain("{{new_topic}}");
+    expect(container.textContent).toContain("{{customer}}");
+    expect(container.textContent).not.toContain("{{old_topic}}");
+    expect(container.textContent).not.toContain("{{ne}}");
+
+    flushSync(() => {
+      findButton(container, "Save stage")!.click();
+    });
+    await flushQueries();
+
+    const updateStageCalls = (pipelinesApi.updateStage as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const lastConfig = (updateStageCalls.at(-1)?.[2] as {
+      config: {
+        variables: Array<{ name: string; label: string | null; source?: string }>;
+      };
+    }).config;
+    expect(lastConfig.variables.map((variable) => variable.name)).toEqual(["new_topic", "customer"]);
+    expect(lastConfig.variables[0]).toMatchObject({
+      name: "new_topic",
+      label: "Topic",
+      type: "select",
+      defaultValue: "urgent",
+      required: false,
+      options: ["urgent", "later"],
+    });
+    expect(lastConfig.variables[1]).toMatchObject({ name: "customer", label: "Customer", source: "manual" });
+
+    flushSync(() => {
+      root.unmount();
+    });
+    queryClient.clear();
+  });
+
   it("edits manual intake fields without an automation agent or instruction placeholder", async () => {
     const manualPipeline = makePipeline();
     manualPipeline.stages = manualPipeline.stages.map((stage) =>

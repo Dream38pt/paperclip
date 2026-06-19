@@ -1379,6 +1379,8 @@ export {
   interpolateRoutineTemplate,
   isBuiltinRoutineVariable,
   isValidRoutineVariableName,
+  reconcileRoutineVariablesWithTemplate,
+  type ReconcileRoutineVariablesOptions,
   stringifyRoutineVariableValue,
   syncRoutineVariablesWithTemplate,
 } from "./routine-variables.js";

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  extractRoutineVariableNames,
   groupWarningsByStage,
+  isBuiltinRoutineVariable,
   isPipelineTerminalStageKind,
   syncRoutineVariablesWithTemplate,
   type RoutineEnvConfig,
@@ -121,6 +123,8 @@ type StageConfig = {
   autoAdvanceOnChildrenTerminal?: string;
   [key: string]: unknown;
 };
+
+type EditorRoutineVariable = RoutineVariable & { source?: "manual" };
 
 const STAGE_NAV_GROUPS: Array<{
   label: string;
@@ -293,6 +297,23 @@ function savedStageVariables(stage: PipelineStage | null | undefined, savedBody:
   const synced = syncRoutineVariablesWithTemplate(["", savedBody], existing);
   const syncedNames = new Set(synced.map((variable) => variable.name));
   return [...synced, ...existing.filter((variable) => !syncedNames.has(variable.name))];
+}
+
+function stripVariableEditorMetadata(variables: RoutineVariable[]): RoutineVariable[] {
+  return variables.map((variable) => {
+    const { source: _source, ...rest } = variable as EditorRoutineVariable;
+    return rest;
+  });
+}
+
+function manualVariableNamesForTemplate(
+  variables: RoutineVariable[],
+  template: Array<string | null | undefined>,
+): string[] {
+  const templateNames = new Set(
+    extractRoutineVariableNames(template).filter((name) => !isBuiltinRoutineVariable(name)),
+  );
+  return variables.filter((variable) => !templateNames.has(variable.name)).map((variable) => variable.name);
 }
 
 type StageFormValues = {
@@ -705,6 +726,10 @@ export function PipelineSettings() {
   const savedInstructionsVariables = useMemo(
     () => savedStageVariables(selectedStage, savedInstructionsBody),
     [selectedStage, savedInstructionsBody],
+  );
+  const savedManualVariableNames = useMemo(
+    () => manualVariableNamesForTemplate(savedInstructionsVariables, [selectedStage?.name ?? "", savedInstructionsBody]),
+    [savedInstructionsBody, savedInstructionsVariables, selectedStage?.name],
   );
 
   const mentionOptions = useMemo(
@@ -1229,7 +1254,7 @@ export function PipelineSettings() {
   const instructionsBodyDirty = selectedStage != null && instructionsBody !== savedInstructionsBody;
   const variablesDirty =
     selectedStage != null &&
-    JSON.stringify(instructionsVariables) !== JSON.stringify(savedInstructionsVariables);
+    JSON.stringify(stripVariableEditorMetadata(instructionsVariables)) !== JSON.stringify(savedInstructionsVariables);
   const selectedAutomationAgent = stageAssigneeAgentId ? agentById.get(stageAssigneeAgentId) ?? null : null;
   const stageEnvDirty = selectedStage != null && JSON.stringify(stageEnv) !== savedStageEnvKey;
   const stageDirty =
@@ -1965,12 +1990,14 @@ export function PipelineSettings() {
                           }
                         />
                         <RoutineVariablesEditor
+                          key={selectedStage?.id ?? "stage"}
                           title={stageName}
                           description={instructionsBody}
                           value={instructionsVariables}
                           onChange={setInstructionsVariables}
                           preserveUnmatchedVariables
                           allowManualVariables
+                          manualVariableNamesSeed={savedManualVariableNames}
                           heading="Intake fields"
                           descriptionText="Fields shown when a new item starts here. Placeholders in automation instructions are added automatically; manual fields stay until you remove them."
                           emptyMessage="No intake fields yet. Add a field manually or use a {{placeholder}} in the automation instructions."
