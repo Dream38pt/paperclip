@@ -797,6 +797,47 @@ describeEmbeddedPostgres("pipeline routes", () => {
       .send({ decision: "request_changes", reason: "Needs a loop", expectedVersion: 2 })
       .expect(422);
     expect(missingConfig.body.code).toBe("validation");
+
+    const optionalRejectReasonPipeline = await http
+      .post(`/api/companies/${company.id}/pipelines`)
+      .send({
+        key: "review-optional-reject-reason",
+        name: "Review optional reject reason",
+        stages: [
+          { key: "drafting", name: "Drafting", kind: "working", position: 100 },
+          {
+            key: "review",
+            name: "Review",
+            kind: "review",
+            position: 200,
+            config: {
+              approveToStageKey: "done",
+              rejectToStageKey: "cancelled",
+              requestChangesToStageKey: "drafting",
+              requireRejectReason: false,
+            },
+          },
+          { key: "done", name: "Done", kind: "done", position: 900 },
+          { key: "cancelled", name: "Cancelled", kind: "cancelled", position: 1000 },
+        ],
+      })
+      .expect(201);
+    const optionalReject = await http
+      .post(`/api/pipelines/${optionalRejectReasonPipeline.body.id}/cases`)
+      .send({ caseKey: "optional-reject", title: "Optional reject" })
+      .expect(201);
+    await http.post(`/api/cases/${optionalReject.body.case.id}/transition`).send({ toStageKey: "review", expectedVersion: 1 }).expect(200);
+    await http.post(`/api/cases/${optionalReject.body.case.id}/review`).send({ decision: "reject", expectedVersion: 2 }).expect(200);
+
+    const requiredRequestChangesReason = await http
+      .post(`/api/pipelines/${optionalRejectReasonPipeline.body.id}/cases`)
+      .send({ caseKey: "request-changes-reason", title: "Request changes reason" })
+      .expect(201);
+    await http.post(`/api/cases/${requiredRequestChangesReason.body.case.id}/transition`).send({ toStageKey: "review", expectedVersion: 1 }).expect(200);
+    await http
+      .post(`/api/cases/${requiredRequestChangesReason.body.case.id}/review`)
+      .send({ decision: "request_changes", expectedVersion: 2 })
+      .expect(422);
   });
 
   it("aggregates the review inbox across pipelines with parent and review config context", async () => {

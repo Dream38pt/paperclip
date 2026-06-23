@@ -3465,7 +3465,7 @@ function reviewDecisionActions(
       label: "Request changes",
       targetStageKey: config.requestChangesToStageKey,
       targetStageName: stageLookup.get(config.requestChangesToStageKey) ?? humanizePipelineItemStatus(config.requestChangesToStageKey),
-      requireReason: config.requireRejectReason,
+      requireReason: true,
       variant: "outline",
     });
   }

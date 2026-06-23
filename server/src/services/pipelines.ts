@@ -3900,13 +3900,6 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
 
       const referencedKeys = [...new Set(input.items.flatMap((item) => item.blockedByCaseKeys ?? []))];
       const resolvedCaseIdsByKey = new Map<string, string>();
-      for (const key of referencedKeys) {
-        try {
-          assertCaseKey(key);
-        } catch {
-          // Leave invalid keys unresolved so only rows that reference them fail below.
-        }
-      }
       const validReferencedKeys = referencedKeys.filter((key) => {
         try {
           assertCaseKey(key);
@@ -4656,7 +4649,8 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
         }
         const config = reviewConfigForStage(detail.stage);
         assertActorCanApproveStageExit(detail.stage, input.actor);
-        if (input.decision !== "approve" && config.requireRejectReason !== false && !input.reason?.trim()) {
+        const reasonRequired = input.decision === "request_changes" || (input.decision === "reject" && config.requireRejectReason !== false);
+        if (reasonRequired && !input.reason?.trim()) {
           throw unprocessable("Review decision reason is required", { code: "validation" });
         }
         const toStageKey = targetStageKeyForReviewDecision(config, input.decision);
