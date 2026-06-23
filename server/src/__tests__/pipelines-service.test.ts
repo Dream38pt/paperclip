@@ -1223,7 +1223,7 @@ describeEmbeddedPostgres("pipelineService", () => {
     expect(events.filter((event) => event.type === "automation_failed")).toHaveLength(1);
   });
 
-  it("counts direct children retired by stage automation retry as terminal", async () => {
+  it("auto-advances after retry creates a fresh terminal child rollup", async () => {
     const company = await seedCompany();
     const routine = await seedRoutine(company.id, "Retry child cleanup");
     const pipeline = await svc.createPipeline({
@@ -1237,6 +1237,7 @@ describeEmbeddedPostgres("pipelineService", () => {
           name: "Build",
           kind: "working",
           config: {
+            autoAdvanceOnChildrenTerminal: "review",
             onEnter: {
               type: "run_routine",
               id: "build-children",
@@ -1244,6 +1245,7 @@ describeEmbeddedPostgres("pipelineService", () => {
             },
           },
         },
+        { key: "review", name: "Review", kind: "working" },
         { key: "done", name: "Done", kind: "done" },
         { key: "cancelled", name: "Cancelled", kind: "cancelled" },
       ],
@@ -1284,12 +1286,26 @@ describeEmbeddedPostgres("pipelineService", () => {
       .update(pipelineCases)
       .set({ automationAttemptId: attempt!.id })
       .where(eq(pipelineCases.id, child.case.id));
+    await svc.transitionCase({
+      companyId: company.id,
+      caseId: child.case.id,
+      toStageKey: "done",
+      expectedVersion: child.case.version,
+      actor: userActor,
+    });
+    const [reviewingParent] = await db
+      .select({ version: pipelineCases.version, stageKey: pipelineStages.key })
+      .from(pipelineCases)
+      .innerJoin(pipelineStages, eq(pipelineCases.stageId, pipelineStages.id))
+      .where(eq(pipelineCases.id, parent.case.id));
+    expect(reviewingParent!.stageKey).toBe("review");
 
-    await svc.retryStageAutomation({
+    const retry = await svc.retryStageAutomation({
       companyId: company.id,
       caseId: parent.case.id,
-      scope: "current_stage",
-      expectedVersion: parent.case.version,
+      scope: "previous_stage",
+      targetStageId: event!.toStageId,
+      expectedVersion: reviewingParent!.version,
       cleanup: {
         retireDirectChildren: true,
         retireDescendants: true,
@@ -1297,12 +1313,38 @@ describeEmbeddedPostgres("pipelineService", () => {
       },
       actor: userActor,
     });
+    const retryChild = await svc.ingestCase({
+      companyId: company.id,
+      pipelineId: pipeline.id,
+      caseKey: "retry-child",
+      title: "Retry child",
+      parentCaseId: parent.case.id,
+      actor: userActor,
+    });
+    await db
+      .update(pipelineCases)
+      .set({ automationAttemptId: retry.automationLedger.id })
+      .where(eq(pipelineCases.id, retryChild.case.id));
+    await svc.transitionCase({
+      companyId: company.id,
+      caseId: retryChild.case.id,
+      toStageKey: "done",
+      expectedVersion: retryChild.case.version,
+      actor: userActor,
+    });
 
-    const [freshParent] = await db.select().from(pipelineCases).where(eq(pipelineCases.id, parent.case.id));
+    const [freshParent] = await db
+      .select({ childCount: pipelineCases.childCount, terminalChildCount: pipelineCases.terminalChildCount, stageKey: pipelineStages.key })
+      .from(pipelineCases)
+      .innerJoin(pipelineStages, eq(pipelineCases.stageId, pipelineStages.id))
+      .where(eq(pipelineCases.id, parent.case.id));
     const [freshChild] = await db.select().from(pipelineCases).where(eq(pipelineCases.id, child.case.id));
-    expect(freshParent!.childCount).toBe(1);
-    expect(freshParent!.terminalChildCount).toBe(1);
+    expect(freshParent!.childCount).toBe(2);
+    expect(freshParent!.terminalChildCount).toBe(2);
+    expect(freshParent!.stageKey).toBe("review");
     expect(freshChild!.terminalKind).toBe("cancelled");
     expect(freshChild!.retiredReason).toBe("automation_retry");
+    const events = await svc.listCaseEvents(company.id, parent.case.id);
+    expect(events.filter((pipelineEvent) => pipelineEvent.type === "children_terminal")).toHaveLength(2);
   });
 });

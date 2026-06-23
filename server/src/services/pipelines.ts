@@ -1606,6 +1606,24 @@ async function hasCaseEvent(db: PipelineDb, caseId: string, type: string) {
   return Boolean(row);
 }
 
+async function hasChildrenTerminalEventForRollup(
+  db: PipelineDb,
+  caseId: string,
+  rollup: Awaited<ReturnType<typeof computeCaseRollup>>,
+) {
+  const row = await db
+    .select({ id: pipelineCaseEvents.id })
+    .from(pipelineCaseEvents)
+    .where(and(
+      eq(pipelineCaseEvents.caseId, caseId),
+      eq(pipelineCaseEvents.type, "children_terminal"),
+      sql`${pipelineCaseEvents.payload} -> 'rollup' = ${JSON.stringify(rollup)}::jsonb`,
+    ))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  return Boolean(row);
+}
+
 function expectedChildrenFromFields(fields: Record<string, unknown> | null | undefined) {
   const value = fields?.expectedChildren;
   if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
@@ -3235,7 +3253,11 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       const gate = childrenGateConfig(stageConfig(ancestor.stage), {
         explicitZeroChildrenPass: options.allowExplicitZeroChildrenPass,
       });
-      if (!rollup.complete || (rollup.total === 0 && !gate.explicitZeroChildrenPass) || await hasCaseEvent(tx, ancestor.case.id, "children_terminal")) {
+      if (
+        !rollup.complete ||
+        (rollup.total === 0 && !gate.explicitZeroChildrenPass) ||
+        await hasChildrenTerminalEventForRollup(tx, ancestor.case.id, rollup)
+      ) {
         continue;
       }
       await writeCaseEvent(tx, {
