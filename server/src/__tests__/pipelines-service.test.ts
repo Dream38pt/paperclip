@@ -1222,4 +1222,87 @@ describeEmbeddedPostgres("pipelineService", () => {
     const events = await svc.listCaseEvents(company.id, created.case.id);
     expect(events.filter((event) => event.type === "automation_failed")).toHaveLength(1);
   });
+
+  it("counts direct children retired by stage automation retry as terminal", async () => {
+    const company = await seedCompany();
+    const routine = await seedRoutine(company.id, "Retry child cleanup");
+    const pipeline = await svc.createPipeline({
+      companyId: company.id,
+      key: "retry-child-cleanup",
+      name: "Retry child cleanup",
+      actor: userActor,
+      stages: [
+        {
+          key: "build",
+          name: "Build",
+          kind: "working",
+          config: {
+            onEnter: {
+              type: "run_routine",
+              id: "build-children",
+              routineId: routine.id,
+            },
+          },
+        },
+        { key: "done", name: "Done", kind: "done" },
+        { key: "cancelled", name: "Cancelled", kind: "cancelled" },
+      ],
+    });
+    const parent = await svc.ingestCase({
+      companyId: company.id,
+      pipelineId: pipeline.id,
+      caseKey: "parent",
+      title: "Parent",
+      actor: userActor,
+    });
+    const [event] = await db.insert(pipelineCaseEvents).values({
+      companyId: company.id,
+      caseId: parent.case.id,
+      type: "transitioned",
+      actorType: "system",
+      toStageId: parent.case.stageId,
+      payload: { test: true },
+    }).returning();
+    const [attempt] = await db.insert(pipelineAutomationExecutions).values({
+      companyId: company.id,
+      caseId: parent.case.id,
+      automationId: "build-children",
+      triggeringEventId: event!.id,
+      routineId: routine.id,
+      status: "failed",
+      error: "boom",
+    }).returning();
+    const child = await svc.ingestCase({
+      companyId: company.id,
+      pipelineId: pipeline.id,
+      caseKey: "child",
+      title: "Child",
+      parentCaseId: parent.case.id,
+      actor: userActor,
+    });
+    await db
+      .update(pipelineCases)
+      .set({ automationAttemptId: attempt!.id })
+      .where(eq(pipelineCases.id, child.case.id));
+
+    await svc.retryStageAutomation({
+      companyId: company.id,
+      caseId: parent.case.id,
+      scope: "current_stage",
+      expectedVersion: parent.case.version,
+      cleanup: {
+        retireDirectChildren: true,
+        retireDescendants: true,
+        cancelLinkedAutomationIssues: true,
+      },
+      actor: userActor,
+    });
+
+    const [freshParent] = await db.select().from(pipelineCases).where(eq(pipelineCases.id, parent.case.id));
+    const [freshChild] = await db.select().from(pipelineCases).where(eq(pipelineCases.id, child.case.id));
+    expect(freshParent!.childCount).toBe(1);
+    expect(freshParent!.terminalChildCount).toBe(1);
+    expect(freshChild!.terminalKind).toBe("cancelled");
+    expect(freshChild!.retiredReason).toBe("automation_retry");
+  });
 });

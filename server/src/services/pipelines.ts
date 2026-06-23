@@ -2301,7 +2301,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       ? eq(pipelineCases.automationAttemptId, input.previousAttemptId)
       : sql`false`;
     const directRows = await dbOrTx
-      .select({ id: pipelineCases.id })
+      .select({ id: pipelineCases.id, terminalKind: pipelineCases.terminalKind })
       .from(pipelineCases)
       .where(and(
         eq(pipelineCases.companyId, input.companyId),
@@ -2310,6 +2310,9 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
         ownedWhere,
       ));
     const directCaseIds = directRows.map((row) => row.id);
+    const directNonTerminalCaseIds = directRows
+      .filter((row) => !row.terminalKind)
+      .map((row) => row.id);
     const descendantIds = await descendantCaseIds(dbOrTx, input.companyId, directCaseIds);
     const effectCaseIds = [...new Set([...directCaseIds, ...descendantIds])];
     const linkRows = await dbOrTx
@@ -2348,6 +2351,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       ));
     return {
       directCaseIds,
+      directNonTerminalCaseIds,
       descendantIds,
       effectCaseIds,
       linkedAutomationIssueIds,
@@ -4361,6 +4365,15 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
               inArray(pipelineCases.id, uniqueRetireCaseIds),
               isNull(pipelineCases.retiredAt),
             ));
+        }
+        const retiredDirectNonTerminalCount = input.cleanup.retireDirectChildren
+          ? effects.directNonTerminalCaseIds.length
+          : 0;
+        if (retiredDirectNonTerminalCount > 0) {
+          await adjustParentCounts(tx, {
+            parentCaseId: input.caseId,
+            terminalChildDelta: retiredDirectNonTerminalCount,
+          });
         }
         const issueIdsToCancel = input.cleanup.cancelLinkedAutomationIssues
           ? effects.linkedAutomationIssueIds
