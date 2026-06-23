@@ -2058,19 +2058,19 @@ async function resolveAutomationAttemptForActorRun(db: PipelineDb, companyId: st
 
 async function descendantCaseIds(db: PipelineDb, companyId: string, rootCaseIds: string[]) {
   if (rootCaseIds.length === 0) return [];
-  const rootIdList = sql.raw(`(${rootCaseIds.map((id) => `'${id.replace(/'/g, "''")}'::uuid`).join(",")})`);
+  const rootIdList = sql.join(rootCaseIds.map((id) => sql`${id}::uuid`), sql`, `);
   const result = await db.execute(sql`
     with recursive descendants as (
       select id, parent_case_id, 0 as depth
       from pipeline_cases
-      where company_id = ${companyId} and id in ${rootIdList}
+      where company_id = ${companyId} and id in (${rootIdList})
       union all
       select child.id, child.parent_case_id, parent.depth + 1
       from pipeline_cases child
       join descendants parent on child.parent_case_id = parent.id
       where child.company_id = ${companyId} and parent.depth < 25
     )
-    select id from descendants where id not in ${rootIdList}
+    select id from descendants where id not in (${rootIdList})
   `);
   return Array.from(result).map((row) => String((row as { id: string }).id));
 }
