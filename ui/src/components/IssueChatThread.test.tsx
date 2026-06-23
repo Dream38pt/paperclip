@@ -675,6 +675,51 @@ describe("IssueChatThread", () => {
     });
   });
 
+  it("cycles work modes and prevents default when iOS leaves the keydown code empty", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={[]}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            issueWorkMode="standard"
+            onAdd={async () => {}}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const composer = container.querySelector('[data-testid="issue-chat-composer"]') as HTMLDivElement | null;
+    expect(composer).not.toBeNull();
+    expect(composer?.getAttribute("data-pending-work-mode")).toBe("standard");
+
+    // iOS Safari with a hardware keyboard frequently reports an empty `code` for
+    // cmd-period. Without a `key` fallback the handler returns early, never calls
+    // preventDefault, and Safari's default cancel/dismiss closes the view.
+    const evt = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      code: "",
+      key: ".",
+      metaKey: true,
+    });
+    act(() => {
+      composer?.dispatchEvent(evt);
+    });
+
+    expect(evt.defaultPrevented).toBe(true);
+    expect(composer?.getAttribute("data-pending-work-mode")).not.toBe("standard");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("virtualizes long merged threads so only a windowed slice mounts", () => {
     const root = createRoot(container);
     const totalMergedRows =
