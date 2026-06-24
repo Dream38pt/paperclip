@@ -2947,7 +2947,14 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
         ].filter(Boolean).join("\n\n"),
       });
       if (!run.linkedIssueId) {
-        throw new Error(`Routine run ${run.id} did not create or coalesce an execution issue`);
+        const failureReason = typeof run.failureReason === "string" && run.failureReason.trim().length > 0
+          ? run.failureReason.trim()
+          : null;
+        throw new Error(
+          failureReason
+            ? `Routine run ${run.id} failed: ${failureReason}`
+            : `Routine run ${run.id} did not create or coalesce an execution issue`,
+        );
       }
       const [updated] = await db
         .update(pipelineAutomationExecutions)

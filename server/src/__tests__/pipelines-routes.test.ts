@@ -11,7 +11,9 @@ import {
   createDb,
   documents,
   documentRevisions,
+  executionWorkspaces,
   heartbeatRuns,
+  instanceSettings,
   issueComments,
   issues,
   pipelineAutomationExecutions,
@@ -24,6 +26,8 @@ import {
   pipelineTransitions,
   pipelines,
   principalPermissionGrants,
+  projectWorkspaces,
+  projects,
   routineRuns,
   routines,
 } from "@paperclipai/db";
@@ -38,6 +42,7 @@ import {
   PIPELINE_CASE_EVENTS_MAX_LIMIT,
   PIPELINE_CONTEXT_PACK_EVENT_LIMIT,
 } from "../services/pipelines.js";
+import { instanceSettingsService } from "../services/instance-settings.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe.sequential : describe.skip;
@@ -74,12 +79,16 @@ describeEmbeddedPostgres("pipeline routes", () => {
     await db.delete(routineRuns);
     await db.delete(heartbeatRuns);
     await db.delete(issues);
+    await db.delete(executionWorkspaces);
     await db.delete(pipelines);
     await db.delete(routines);
+    await db.delete(projectWorkspaces);
+    await db.delete(projects);
     await db.delete(principalPermissionGrants);
     await db.delete(companyMemberships);
     await db.delete(agents);
     await db.delete(companies);
+    await db.delete(instanceSettings);
   });
 
   afterAll(async () => {
@@ -105,6 +114,53 @@ describeEmbeddedPostgres("pipeline routes", () => {
       issuePrefix: `P${randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`,
     }).returning();
     return company!;
+  }
+
+  async function seedAutomationAgent(companyId: string) {
+    const [agent] = await db.insert(agents).values({
+      companyId,
+      name: "Pipeline Automator",
+      role: "engineer",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    }).returning();
+    return agent!;
+  }
+
+  async function seedProjectWorkspaceFixture(companyId: string, name = "Automation") {
+    const projectId = randomUUID();
+    const projectWorkspaceId = randomUUID();
+    const executionWorkspaceId = randomUUID();
+
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: `${name} project`,
+      status: "in_progress",
+    });
+    await db.insert(projectWorkspaces).values({
+      id: projectWorkspaceId,
+      companyId,
+      projectId,
+      name: `${name} workspace`,
+      isPrimary: true,
+      sharedWorkspaceKey: `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${projectWorkspaceId.slice(0, 8)}`,
+    });
+    await db.insert(executionWorkspaces).values({
+      id: executionWorkspaceId,
+      companyId,
+      projectId,
+      projectWorkspaceId,
+      mode: "isolated_workspace",
+      strategyType: "git_worktree",
+      name: `${name} worktree`,
+      status: "active",
+      providerType: "git_worktree",
+    });
+
+    return { projectId, projectWorkspaceId, executionWorkspaceId };
   }
 
   const boardActor: Express.Request["actor"] = {
@@ -430,6 +486,200 @@ describeEmbeddedPostgres("pipeline routes", () => {
         title: "Checkbox confirmation interactions",
         pipelineId: sourcePipeline!.id,
       },
+    });
+  });
+
+  it("carries route-saved stage automation workspace context into detail responses and execution issues", async () => {
+    const company = await seedCompany();
+    const http = request(app(boardActor));
+    const agent = await seedAutomationAgent(company.id);
+    const { projectId, projectWorkspaceId, executionWorkspaceId } =
+      await seedProjectWorkspaceFixture(company.id, "Route automation");
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true });
+
+    const pipeline = await http
+      .post(`/api/companies/${company.id}/pipelines`)
+      .send({
+        key: "route-workspace-automation",
+        name: "Route workspace automation",
+      })
+      .expect(201);
+    const stageId = pipeline.body.stages.find((stage: { key: string }) => stage.key === "in_progress").id as string;
+
+    await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stageId}`)
+      .send({
+        config: {
+          automation: {
+            assigneeAgentId: agent.id,
+            instructionsBody: "Use the selected project workspace.",
+            projectId,
+            projectWorkspaceId,
+            executionWorkspaceId,
+            executionWorkspacePreference: "reuse_existing",
+            executionWorkspaceSettings: { mode: "isolated_workspace" },
+          },
+        },
+      })
+      .expect(200);
+
+    const detail = await http.get(`/api/pipelines/${pipeline.body.id}`).expect(200);
+    const automatedStage = detail.body.stages.find((stage: { key: string }) => stage.key === "in_progress");
+    expect(automatedStage.config.automation).toMatchObject({
+      assigneeAgentId: agent.id,
+      instructionsBody: "Use the selected project workspace.",
+      projectId,
+      projectWorkspaceId,
+      executionWorkspaceId,
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: { mode: "isolated_workspace" },
+    });
+
+    const created = await http
+      .post(`/api/pipelines/${pipeline.body.id}/cases`)
+      .send({ caseKey: "route-workspace-context", title: "Route workspace context" })
+      .expect(201);
+    const moved = await http
+      .post(`/api/cases/${created.body.case.id}/transition`)
+      .send({ toStageKey: "in_progress", expectedVersion: 1 })
+      .expect(200);
+
+    expect(moved.body.automationExecution.status).toBe("succeeded");
+    const executionIssueId = moved.body.automationExecution.execution.executionIssueId as string;
+    const [issue] = await db
+      .select({
+        projectId: issues.projectId,
+        projectWorkspaceId: issues.projectWorkspaceId,
+        executionWorkspaceId: issues.executionWorkspaceId,
+        executionWorkspacePreference: issues.executionWorkspacePreference,
+        executionWorkspaceSettings: issues.executionWorkspaceSettings,
+      })
+      .from(issues)
+      .where(eq(issues.id, executionIssueId));
+
+    expect(issue).toEqual({
+      projectId,
+      projectWorkspaceId,
+      executionWorkspaceId,
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: { mode: "isolated_workspace" },
+    });
+  });
+
+  it("fails automation execution when the selected project workspace belongs to a different project", async () => {
+    const company = await seedCompany();
+    const http = request(app(boardActor));
+    const agent = await seedAutomationAgent(company.id);
+    const source = await seedProjectWorkspaceFixture(company.id, "Source project");
+    const mismatched = await seedProjectWorkspaceFixture(company.id, "Mismatched project");
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true });
+
+    const pipeline = await http
+      .post(`/api/companies/${company.id}/pipelines`)
+      .send({
+        key: "mismatched-workspace-automation",
+        name: "Mismatched workspace automation",
+      })
+      .expect(201);
+    const stageId = pipeline.body.stages.find((stage: { key: string }) => stage.key === "in_progress").id as string;
+
+    await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stageId}`)
+      .send({
+        config: {
+          automation: {
+            assigneeAgentId: agent.id,
+            instructionsBody: "This should fail before issue creation.",
+            projectId: source.projectId,
+            projectWorkspaceId: mismatched.projectWorkspaceId,
+          },
+        },
+      })
+      .expect(200);
+
+    const created = await http
+      .post(`/api/pipelines/${pipeline.body.id}/cases`)
+      .send({ caseKey: "mismatched-workspace", title: "Mismatched workspace" })
+      .expect(201);
+    const moved = await http
+      .post(`/api/cases/${created.body.case.id}/transition`)
+      .send({ toStageKey: "in_progress", expectedVersion: 1 })
+      .expect(200);
+
+    expect(moved.body.automationExecution.status).toBe("failed");
+    const executionId = moved.body.automationExecution.execution.id as string;
+    const [execution] = await db
+      .select()
+      .from(pipelineAutomationExecutions)
+      .where(eq(pipelineAutomationExecutions.id, executionId));
+    expect(execution!.executionIssueId).toBeNull();
+    expect(execution!.error).toContain("Project workspace must belong to the selected project");
+  });
+
+  it("keeps legacy stage automation with only assignee and instructions compatible", async () => {
+    const company = await seedCompany();
+    const http = request(app(boardActor));
+    const agent = await seedAutomationAgent(company.id);
+
+    const pipeline = await http
+      .post(`/api/companies/${company.id}/pipelines`)
+      .send({
+        key: "legacy-automation",
+        name: "Legacy automation",
+      })
+      .expect(201);
+    const stageId = pipeline.body.stages.find((stage: { key: string }) => stage.key === "in_progress").id as string;
+
+    await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stageId}`)
+      .send({
+        config: {
+          automation: {
+            assigneeAgentId: agent.id,
+            instructionsBody: "Legacy automation body.",
+          },
+        },
+      })
+      .expect(200);
+
+    const detail = await http.get(`/api/pipelines/${pipeline.body.id}`).expect(200);
+    const automatedStage = detail.body.stages.find((stage: { key: string }) => stage.key === "in_progress");
+    expect(automatedStage.config.automation).toMatchObject({
+      assigneeAgentId: agent.id,
+      instructionsBody: "Legacy automation body.",
+      projectId: null,
+      projectWorkspaceId: null,
+      executionWorkspaceId: null,
+      executionWorkspacePreference: null,
+      executionWorkspaceSettings: null,
+    });
+
+    const created = await http
+      .post(`/api/pipelines/${pipeline.body.id}/cases`)
+      .send({ caseKey: "legacy-automation", title: "Legacy automation" })
+      .expect(201);
+    const moved = await http
+      .post(`/api/cases/${created.body.case.id}/transition`)
+      .send({ toStageKey: "in_progress", expectedVersion: 1 })
+      .expect(200);
+
+    expect(moved.body.automationExecution.status).toBe("succeeded");
+    const executionIssueId = moved.body.automationExecution.execution.executionIssueId as string;
+    const [issue] = await db
+      .select({
+        projectId: issues.projectId,
+        projectWorkspaceId: issues.projectWorkspaceId,
+        executionWorkspaceId: issues.executionWorkspaceId,
+        executionWorkspaceSettings: issues.executionWorkspaceSettings,
+      })
+      .from(issues)
+      .where(eq(issues.id, executionIssueId));
+
+    expect(issue).toEqual({
+      projectId: null,
+      projectWorkspaceId: null,
+      executionWorkspaceId: null,
+      executionWorkspaceSettings: null,
     });
   });
 
