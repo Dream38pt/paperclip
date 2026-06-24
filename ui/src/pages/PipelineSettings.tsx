@@ -6,6 +6,9 @@ import {
   isBuiltinRoutineVariable,
   isPipelineTerminalStageKind,
   syncRoutineVariablesWithTemplate,
+  type ExecutionWorkspaceMode,
+  type ExecutionWorkspaceSummary,
+  type IssueExecutionWorkspaceSettings,
   type RoutineEnvConfig,
   type RoutineVariable,
 } from "@paperclipai/shared";
@@ -36,6 +39,9 @@ import {
 } from "lucide-react";
 import { agentsApi } from "../api/agents";
 import { accessApi } from "../api/access";
+import { authApi } from "../api/auth";
+import { executionWorkspacesApi } from "../api/execution-workspaces";
+import { instanceSettingsApi } from "../api/instanceSettings";
 import { projectsApi } from "../api/projects";
 import { secretsApi } from "../api/secrets";
 import { ApiError } from "../api/client";
@@ -84,7 +90,15 @@ import { useStandardMarkdownMentionOptions } from "../hooks/useStandardMarkdownM
 import { formatPipelineItemEvent, INTERNAL_FIELD_KEYS } from "../lib/pipeline-item-detail";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency } from "../lib/recent-assignees";
+import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
+import {
+  defaultExecutionWorkspaceModeForProject,
+  defaultProjectWorkspaceIdForProject,
+  issueExecutionWorkspaceModeForExistingWorkspace,
+} from "../lib/project-workspace-defaults";
+import { orderReusableExecutionWorkspaces } from "../lib/reusable-execution-workspaces";
 import { cn, relativeTime } from "../lib/utils";
+import { useProjectOrder } from "../hooks/useProjectOrder";
 import { Link, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { StageHealthWarnings } from "../components/PipelineHealthWarnings";
 import {
@@ -112,6 +126,11 @@ type StageConfig = {
   automation?: {
     assigneeAgentId?: string | null;
     instructionsBody?: string | null;
+    projectId?: string | null;
+    projectWorkspaceId?: string | null;
+    executionWorkspaceId?: string | null;
+    executionWorkspacePreference?: ExecutionWorkspaceMode | string | null;
+    executionWorkspaceSettings?: IssueExecutionWorkspaceSettings | null;
     // Derived (read-only) fields the server adds from the backing automation
     // routine. They are never persisted into stage config — stage secrets live
     // on `routines.env` and are saved through the automation-env route.
@@ -263,14 +282,72 @@ function stageConfig(stage: PipelineStage | null | undefined): StageConfig {
   return config as StageConfig;
 }
 
+const STAGE_EXECUTION_WORKSPACE_OPTIONS = [
+  { value: "shared_workspace", label: "Project default" },
+  { value: "isolated_workspace", label: "New isolated workspace" },
+  { value: "reuse_existing", label: "Reuse existing workspace" },
+] as const;
+
+function nullableString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function nullableExecutionWorkspaceMode(value: unknown): ExecutionWorkspaceMode | "" {
+  switch (nullableString(value)) {
+    case "inherit":
+    case "shared_workspace":
+    case "isolated_workspace":
+    case "operator_branch":
+    case "reuse_existing":
+    case "agent_default":
+      return nullableString(value) as ExecutionWorkspaceMode;
+    default:
+      return "";
+  }
+}
+
+function nullableExecutionWorkspaceSettings(value: unknown): IssueExecutionWorkspaceSettings | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as IssueExecutionWorkspaceSettings
+    : null;
+}
+
+function executionWorkspaceSettingsForPreference(
+  preference: ExecutionWorkspaceMode | "",
+  reusableWorkspace: Pick<ExecutionWorkspaceSummary, "mode"> | null,
+): IssueExecutionWorkspaceSettings | null {
+  if (!preference) return null;
+  return {
+    mode: preference === "reuse_existing"
+      ? issueExecutionWorkspaceModeForExistingWorkspace(reusableWorkspace?.mode)
+      : preference,
+  };
+}
+
 function stageAutomation(stage: PipelineStage | null | undefined) {
   const automation = stageConfig(stage).automation;
   if (!automation || typeof automation !== "object" || Array.isArray(automation)) {
-    return { assigneeAgentId: "", instructionsBody: null as string | null };
+    return {
+      assigneeAgentId: "",
+      instructionsBody: null as string | null,
+      projectId: "",
+      projectWorkspaceId: "",
+      executionWorkspaceId: "",
+      executionWorkspacePreference: "" as ExecutionWorkspaceMode | "",
+      executionWorkspaceSettings: null as IssueExecutionWorkspaceSettings | null,
+    };
   }
+  const executionWorkspaceSettings = nullableExecutionWorkspaceSettings(automation.executionWorkspaceSettings);
   return {
-    assigneeAgentId: typeof automation.assigneeAgentId === "string" ? automation.assigneeAgentId : "",
+    assigneeAgentId: nullableString(automation.assigneeAgentId),
     instructionsBody: typeof automation.instructionsBody === "string" ? automation.instructionsBody : null,
+    projectId: nullableString(automation.projectId),
+    projectWorkspaceId: nullableString(automation.projectWorkspaceId),
+    executionWorkspaceId: nullableString(automation.executionWorkspaceId),
+    executionWorkspacePreference:
+      nullableExecutionWorkspaceMode(automation.executionWorkspacePreference)
+      || nullableExecutionWorkspaceMode(executionWorkspaceSettings?.mode),
+    executionWorkspaceSettings,
   };
 }
 
@@ -585,6 +662,11 @@ type StageFormValues = {
   breakdownWaitForPieces: boolean;
   breakdownWhenFinishedMoveTo: string;
   transitionTargetIds: string[];
+  automationProjectId: string;
+  automationProjectWorkspaceId: string;
+  automationExecutionWorkspaceId: string;
+  automationExecutionWorkspacePreference: ExecutionWorkspaceMode | "";
+  automationExecutionWorkspaceSettings: IssueExecutionWorkspaceSettings | null;
 };
 
 type PipelineTransitionRecord = { fromStageId: string; toStageId: string; label?: string | null };
@@ -623,6 +705,11 @@ function computeStageForm(
       .filter((transition) => transition.fromStageId === stage.id)
       .map((transition) => transition.toStageId)
       .sort(),
+    automationProjectId: automation.projectId,
+    automationProjectWorkspaceId: automation.projectWorkspaceId,
+    automationExecutionWorkspaceId: automation.executionWorkspaceId,
+    automationExecutionWorkspacePreference: automation.executionWorkspacePreference,
+    automationExecutionWorkspaceSettings: automation.executionWorkspaceSettings,
   };
 }
 
@@ -1117,6 +1204,13 @@ export function PipelineSettings() {
   const [newEntriesDisabled, setNewEntriesDisabled] = useState(false);
   const [disableReason, setDisableReason] = useState("");
   const [stageAssigneeAgentId, setStageAssigneeAgentId] = useState("");
+  const [stageProjectId, setStageProjectId] = useState("");
+  const [stageProjectWorkspaceId, setStageProjectWorkspaceId] = useState("");
+  const [stageExecutionWorkspacePreference, setStageExecutionWorkspacePreference] =
+    useState<ExecutionWorkspaceMode | "">("");
+  const [stageExecutionWorkspaceId, setStageExecutionWorkspaceId] = useState("");
+  const [stageExecutionWorkspaceSettings, setStageExecutionWorkspaceSettings] =
+    useState<IssueExecutionWorkspaceSettings | null>(null);
   const [selectedApproval, setSelectedApproval] = useState("any_human");
   const [instructionsBody, setInstructionsBody] = useState("");
   const [instructionsVariables, setInstructionsVariables] = useState<RoutineVariable[]>([]);
@@ -1161,6 +1255,17 @@ export function PipelineSettings() {
     enabled: !!selectedCompanyId,
   });
 
+  const sessionQuery = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+
+  const experimentalSettingsQuery = useQuery({
+    queryKey: queryKeys.instance.experimentalSettings,
+    queryFn: () => instanceSettingsApi.getExperimental(),
+    retry: false,
+  });
+
   const healthQuery = useQuery({
     queryKey: pipelineId ? queryKeys.pipelines.health(pipelineId) : ["pipelines", "health", "none"],
     queryFn: () => pipelinesApi.getHealth(pipelineId!),
@@ -1177,6 +1282,16 @@ export function PipelineSettings() {
     queryKey: selectedCompanyId ? queryKeys.projects.list(selectedCompanyId) : ["projects", "none"],
     queryFn: () => projectsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
+  });
+  const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
+  const activeProjects = useMemo(
+    () => (projectsQuery.data ?? []).filter((project) => !project.archivedAt),
+    [projectsQuery.data],
+  );
+  const { orderedProjects } = useProjectOrder({
+    projects: activeProjects,
+    companyId: selectedCompanyId,
+    userId: currentUserId,
   });
 
   // Company secrets back the Secrets tab — the same inventory used by routines,
@@ -1314,6 +1429,59 @@ export function PipelineSettings() {
       })),
     [agentsQuery.data, recentAssigneeIds],
   );
+  const recentProjectIds = useMemo(() => getRecentProjectIds(), []);
+  const projectOptions = useMemo<InlineEntityOption[]>(
+    () =>
+      orderedProjects.map((project) => ({
+        id: project.id,
+        label: project.name,
+        searchText: project.description ?? "",
+      })),
+    [orderedProjects],
+  );
+  const selectedAutomationProject = useMemo(
+    () => orderedProjects.find((project) => project.id === stageProjectId) ?? null,
+    [orderedProjects, stageProjectId],
+  );
+  const selectedAutomationProjectWorkspace = useMemo(
+    () =>
+      selectedAutomationProject?.workspaces.find((workspace) => workspace.id === stageProjectWorkspaceId)
+      ?? null,
+    [selectedAutomationProject, stageProjectWorkspaceId],
+  );
+  const selectedProjectSupportsExecutionWorkspace =
+    experimentalSettingsQuery.data?.enableIsolatedWorkspaces === true
+    && Boolean(selectedAutomationProject?.executionWorkspacePolicy?.enabled);
+  const reusableExecutionWorkspacesQuery = useQuery({
+    queryKey: selectedCompanyId && stageProjectId
+      ? queryKeys.executionWorkspaces.summaryList(selectedCompanyId, {
+          projectId: stageProjectId,
+          projectWorkspaceId: stageProjectWorkspaceId || undefined,
+          reuseEligible: true,
+        })
+      : ["execution-workspaces", "summary", "none-pipeline-stage"],
+    queryFn: () =>
+      executionWorkspacesApi.listSummaries(selectedCompanyId!, {
+        projectId: stageProjectId,
+        projectWorkspaceId: stageProjectWorkspaceId || undefined,
+        reuseEligible: true,
+      }),
+    enabled:
+      Boolean(selectedCompanyId) &&
+      Boolean(stageProjectId) &&
+      selectedProjectSupportsExecutionWorkspace &&
+      stageExecutionWorkspacePreference === "reuse_existing",
+  });
+  const deduplicatedReusableWorkspaces = useMemo<ExecutionWorkspaceSummary[]>(
+    () => orderReusableExecutionWorkspaces(reusableExecutionWorkspacesQuery.data ?? []),
+    [reusableExecutionWorkspacesQuery.data],
+  );
+  const selectedReusableExecutionWorkspace = useMemo(
+    () =>
+      deduplicatedReusableWorkspaces.find((workspace) => workspace.id === stageExecutionWorkspaceId)
+      ?? null,
+    [deduplicatedReusableWorkspaces, stageExecutionWorkspaceId],
+  );
   const approvalOptions = useMemo<InlineEntityOption[]>(
     () => [
       ...buildCompanyUserInlineOptions(usersQuery.data?.users),
@@ -1394,6 +1562,11 @@ export function PipelineSettings() {
     setNewEntriesDisabled(form.newEntriesDisabled);
     setDisableReason(form.disableReason);
     setStageAssigneeAgentId(form.assigneeAgentId);
+    setStageProjectId(form.automationProjectId);
+    setStageProjectWorkspaceId(form.automationProjectWorkspaceId);
+    setStageExecutionWorkspacePreference(form.automationExecutionWorkspacePreference);
+    setStageExecutionWorkspaceId(form.automationExecutionWorkspaceId);
+    setStageExecutionWorkspaceSettings(form.automationExecutionWorkspaceSettings);
     setSelectedApproval(form.approval);
     setApproveTarget(form.approveTarget);
     setRejectTarget(form.rejectTarget);
@@ -1411,6 +1584,21 @@ export function PipelineSettings() {
     setBreakdownWhenFinishedMoveTo(form.breakdownWhenFinishedMoveTo);
     setTransitionTargets(new Set(form.transitionTargetIds));
   }, [pipeline?.transitions, selectedStage]);
+
+  useEffect(() => {
+    if (!stageProjectId || !selectedAutomationProject) return;
+    if (!stageProjectWorkspaceId) {
+      setStageProjectWorkspaceId(defaultProjectWorkspaceIdForProject(selectedAutomationProject));
+    }
+    if (!stageExecutionWorkspacePreference) {
+      setStageExecutionWorkspacePreference(defaultExecutionWorkspaceModeForProject(selectedAutomationProject));
+    }
+  }, [
+    selectedAutomationProject,
+    stageExecutionWorkspacePreference,
+    stageProjectId,
+    stageProjectWorkspaceId,
+  ]);
 
   useEffect(() => {
     if (!selectedStage) return;
@@ -1460,6 +1648,14 @@ export function PipelineSettings() {
   const saveStage = useMutation({
     mutationFn: async () => {
       if (!pipelineId || !selectedStage || !pipeline) return null;
+      if (
+        stageProjectId &&
+        selectedProjectSupportsExecutionWorkspace &&
+        stageExecutionWorkspacePreference === "reuse_existing" &&
+        !stageExecutionWorkspaceId
+      ) {
+        throw new Error("Choose an existing workspace before saving this stage.");
+      }
       const parsedApproval = parseApprovalValue(selectedApproval);
       const nextRequiresApproval = stageKind === "review";
       const config: StageConfig = {
@@ -1470,6 +1666,15 @@ export function PipelineSettings() {
         automation: {
           assigneeAgentId: stageAssigneeAgentId || null,
           instructionsBody,
+          projectId: stageProjectId || null,
+          projectWorkspaceId: stageProjectId && stageProjectWorkspaceId ? stageProjectWorkspaceId : null,
+          executionWorkspaceId:
+            stageProjectId && stageExecutionWorkspacePreference === "reuse_existing" && stageExecutionWorkspaceId
+              ? stageExecutionWorkspaceId
+              : null,
+          executionWorkspacePreference:
+            stageProjectId && stageExecutionWorkspacePreference ? stageExecutionWorkspacePreference : null,
+          executionWorkspaceSettings: currentAutomationExecutionWorkspaceSettings,
         },
         requireApproval: nextRequiresApproval,
         approver: nextRequiresApproval && parsedApproval.kind !== "any_human"
@@ -1753,6 +1958,37 @@ export function PipelineSettings() {
     }
   };
 
+  const handleAutomationProjectChange = (nextProjectId: string) => {
+    if (nextProjectId) trackRecentProject(nextProjectId);
+    const nextProject = orderedProjects.find((project) => project.id === nextProjectId);
+    setStageProjectId(nextProjectId);
+    setStageProjectWorkspaceId(defaultProjectWorkspaceIdForProject(nextProject));
+    setStageExecutionWorkspacePreference(nextProject ? defaultExecutionWorkspaceModeForProject(nextProject) : "");
+    setStageExecutionWorkspaceId("");
+    setStageExecutionWorkspaceSettings(null);
+  };
+
+  const handleAutomationProjectWorkspaceChange = (nextProjectWorkspaceId: string) => {
+    setStageProjectWorkspaceId(nextProjectWorkspaceId);
+    setStageExecutionWorkspaceId("");
+    setStageExecutionWorkspaceSettings(null);
+  };
+
+  const handleAutomationExecutionWorkspacePreferenceChange = (nextPreference: string) => {
+    const preference = nullableExecutionWorkspaceMode(nextPreference);
+    setStageExecutionWorkspacePreference(preference);
+    setStageExecutionWorkspaceSettings(null);
+    if (preference !== "reuse_existing") {
+      setStageExecutionWorkspaceId("");
+    }
+  };
+
+  const handleAutomationExecutionWorkspaceIdChange = (nextExecutionWorkspaceId: string) => {
+    setStageExecutionWorkspaceId(nextExecutionWorkspaceId);
+    const workspace = deduplicatedReusableWorkspaces.find((entry) => entry.id === nextExecutionWorkspaceId) ?? null;
+    setStageExecutionWorkspaceSettings(executionWorkspaceSettingsForPreference("reuse_existing", workspace));
+  };
+
   if (!selectedCompanyId) {
     return <EmptyState icon={Hexagon} message="Select a company to edit pipeline settings." />;
   }
@@ -1780,6 +2016,17 @@ export function PipelineSettings() {
   const otherStages = stages.filter((stage) => stage.id !== selectedStage?.id);
   const isReviewStage = stageKind === "review";
   const defaultAutoAdvanceStage = nextStageByPosition(stages, selectedStage) ?? otherStages[0] ?? null;
+  const currentAutomationExecutionWorkspaceSettings =
+    stageProjectId && stageExecutionWorkspacePreference
+      ? (
+          stageExecutionWorkspaceSettings
+          ?? executionWorkspaceSettingsForPreference(stageExecutionWorkspacePreference, selectedReusableExecutionWorkspace)
+        )
+      : null;
+  const canSaveAutomationWorkspace =
+    !selectedProjectSupportsExecutionWorkspace ||
+    stageExecutionWorkspacePreference !== "reuse_existing" ||
+    Boolean(stageExecutionWorkspaceId);
 
   const savedStageForm = selectedStage
     ? computeStageForm(selectedStage, pipeline.transitions ?? [])
@@ -1808,6 +2055,12 @@ export function PipelineSettings() {
         breakdownWaitForPieces,
         breakdownWhenFinishedMoveTo,
         transitionTargetIds: [...transitionTargets].sort(),
+        automationProjectId: stageProjectId,
+        automationProjectWorkspaceId: stageProjectId ? stageProjectWorkspaceId : "",
+        automationExecutionWorkspaceId:
+          stageProjectId && stageExecutionWorkspacePreference === "reuse_existing" ? stageExecutionWorkspaceId : "",
+        automationExecutionWorkspacePreference: stageProjectId ? stageExecutionWorkspacePreference : "",
+        automationExecutionWorkspaceSettings: currentAutomationExecutionWorkspaceSettings,
       }
     : null;
   const selectedStageKindOption =
@@ -2531,6 +2784,122 @@ export function PipelineSettings() {
 
                       {selectedAutomationAgent ? (
                         <>
+                          <div className="divide-y divide-border border-y border-border">
+                            <FieldRow label="Project context">
+                              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                                <InlineEntitySelector
+                                  value={stageProjectId}
+                                  options={projectOptions}
+                                  recentOptionIds={recentProjectIds}
+                                  placeholder="Project"
+                                  noneLabel="No project"
+                                  searchPlaceholder="Search projects..."
+                                  emptyMessage="No projects found."
+                                  onChange={handleAutomationProjectChange}
+                                  renderTriggerValue={(option) =>
+                                    option && selectedAutomationProject ? (
+                                      <>
+                                        <span
+                                          className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                                          style={{ backgroundColor: selectedAutomationProject.color ?? "#6366f1" }}
+                                        />
+                                        <span className="truncate">{option.label}</span>
+                                      </>
+                                    ) : (
+                                      <span className="text-muted-foreground">Project</span>
+                                    )
+                                  }
+                                  renderOption={(option) => {
+                                    if (!option.id) return <span className="truncate">{option.label}</span>;
+                                    const project = orderedProjects.find((item) => item.id === option.id);
+                                    return (
+                                      <>
+                                        <span
+                                          className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                                          style={{ backgroundColor: project?.color ?? "#6366f1" }}
+                                        />
+                                        <span className="truncate">{option.label}</span>
+                                      </>
+                                    );
+                                  }}
+                                />
+                                {selectedAutomationProject ? (
+                                  <select
+                                    aria-label="Project workspace"
+                                    value={stageProjectWorkspaceId}
+                                    onChange={(event) => handleAutomationProjectWorkspaceChange(event.target.value)}
+                                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                                  >
+                                    <option value="">Project fallback</option>
+                                    {(selectedAutomationProject.workspaces ?? []).map((workspace) => (
+                                      <option key={workspace.id} value={workspace.id}>
+                                        {workspace.name}{workspace.isPrimary ? " · primary" : ""}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <div className="flex h-10 items-center rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground">
+                                    Project workspace
+                                  </div>
+                                )}
+                              </div>
+                              {selectedAutomationProject && !selectedAutomationProjectWorkspace ? (
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                  This project has no saved workspace default. Paperclip will use the project fallback when automation runs.
+                                </p>
+                              ) : null}
+                            </FieldRow>
+
+                            {selectedAutomationProject && selectedProjectSupportsExecutionWorkspace ? (
+                              <FieldRow label="Execution workspace">
+                                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                                  <select
+                                    aria-label="Execution workspace mode"
+                                    value={stageExecutionWorkspacePreference || "shared_workspace"}
+                                    onChange={(event) => handleAutomationExecutionWorkspacePreferenceChange(event.target.value)}
+                                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                                  >
+                                    {STAGE_EXECUTION_WORKSPACE_OPTIONS.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {stageExecutionWorkspacePreference === "reuse_existing" ? (
+                                    <select
+                                      aria-label="Existing execution workspace"
+                                      value={stageExecutionWorkspaceId}
+                                      onChange={(event) => handleAutomationExecutionWorkspaceIdChange(event.target.value)}
+                                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                                    >
+                                      <option value="">Choose an existing workspace</option>
+                                      {deduplicatedReusableWorkspaces.map((workspace) => (
+                                        <option key={workspace.id} value={workspace.id}>
+                                          {workspace.name} · {workspace.status} · {workspace.branchName ?? workspace.cwd ?? workspace.id.slice(0, 8)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <div className="flex h-10 items-center rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground">
+                                      {stageExecutionWorkspacePreference === "isolated_workspace"
+                                        ? "A new workspace will be created"
+                                        : "Project default workspace"}
+                                    </div>
+                                  )}
+                                </div>
+                                {stageExecutionWorkspacePreference === "reuse_existing" && selectedReusableExecutionWorkspace ? (
+                                  <p className="mt-2 text-xs text-muted-foreground">
+                                    Reusing {selectedReusableExecutionWorkspace.name} from {selectedReusableExecutionWorkspace.branchName ?? selectedReusableExecutionWorkspace.cwd ?? "existing workspace"}.
+                                  </p>
+                                ) : null}
+                                {!canSaveAutomationWorkspace ? (
+                                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                                    Choose an existing workspace before saving reuse mode.
+                                  </p>
+                                ) : null}
+                              </FieldRow>
+                            ) : null}
+                          </div>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <AgentIcon icon={selectedAutomationAgent.icon} className="h-4 w-4 shrink-0" />
                             <span>{selectedAutomationAgent.name} runs this step automatically.</span>
@@ -2557,7 +2926,7 @@ export function PipelineSettings() {
                               contentClassName="min-h-[120px] text-[15px] leading-7"
                               mentions={mentionOptions}
                               onSubmit={() => {
-                                if (!saveStage.isPending && stageName.trim() && !reviewTargetsMissing) {
+                                if (!saveStage.isPending && stageName.trim() && !reviewTargetsMissing && canSaveAutomationWorkspace) {
                                   saveStage.mutate();
                                 }
                               }}
@@ -2755,7 +3124,10 @@ export function PipelineSettings() {
                   <span className="text-sm text-muted-foreground">
                     {saveStage.isPending ? "Saving changes…" : "You have unsaved changes."}
                   </span>
-                  <Button type="submit" disabled={saveStage.isPending || !stageName.trim() || reviewTargetsMissing}>
+                  <Button
+                    type="submit"
+                    disabled={saveStage.isPending || !stageName.trim() || reviewTargetsMissing || !canSaveAutomationWorkspace}
+                  >
                     {saveStage.isPending ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}
                     {saveStage.isPending ? "Saving..." : "Save stage"}
                   </Button>
