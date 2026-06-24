@@ -2816,7 +2816,10 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
               Built from{" "}
               <Link
                 to={detail.builtFromAutomation.stage
-                  ? `/pipelines/${detail.builtFromAutomation.pipeline.id}/settings?stage=${detail.builtFromAutomation.stage.id}`
+                  ? pipelineStageAutomationSettingsHref(
+                      detail.builtFromAutomation.pipeline.id,
+                      detail.builtFromAutomation.stage.id,
+                    )
                   : `/pipelines/${detail.builtFromAutomation.pipeline.id}/settings`}
                 className="font-medium text-foreground hover:underline"
                 title={detail.builtFromAutomation.routine.title}
@@ -3745,7 +3748,7 @@ function PipelineEventText({
         {stageId ? (
           <>
             {" "}
-            <Link to={`/pipelines/${pipelineId}/settings?stage=${stageId}`} className="font-medium text-foreground hover:underline">
+            <Link to={pipelineStageAutomationSettingsHref(pipelineId, stageId)} className="font-medium text-foreground hover:underline">
               Fix stage settings
             </Link>
           </>

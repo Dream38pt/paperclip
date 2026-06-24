@@ -200,6 +200,16 @@ function parseStageSectionKey(value: string | null): StageSectionKey | null {
   }
 }
 
+export function resolvePipelineSettingsFallbackStageId(
+  stages: Array<Pick<PipelineStage, "id">>,
+  selectedStageId: string | null,
+  requestedStageId: string | null,
+) {
+  const requestedStageExists = Boolean(requestedStageId && stages.some((stage) => stage.id === requestedStageId));
+  if (selectedStageId || requestedStageExists) return null;
+  return stages[0]?.id ?? null;
+}
+
 const STAGE_KIND_OPTIONS: Array<{
   value: EditableStageKind;
   label: string;
@@ -1556,18 +1566,20 @@ export function PipelineSettings() {
   // Deep-link from a board-header health warning: ?stage=<id> preselects the
   // flagged stage so the warning's "fix" lands on the right panel.
   const requestedStageId = searchParams.get("stage");
+  const requestedStageExists = Boolean(requestedStageId && stages.some((stage) => stage.id === requestedStageId));
   const requestedStageSection = parseStageSectionKey(searchParams.get("section"));
+  const fallbackStageId = resolvePipelineSettingsFallbackStageId(stages, selectedStageId, requestedStageId);
   useEffect(() => {
-    if (requestedStageId && stages.some((stage) => stage.id === requestedStageId)) {
+    if (requestedStageId && requestedStageExists) {
       setSelectedStageId(requestedStageId);
     }
-  }, [requestedStageId, stages]);
+  }, [requestedStageExists, requestedStageId]);
 
   useEffect(() => {
-    if (!selectedStageId && stages[0]) {
-      setSelectedStageId(stages[0].id);
+    if (fallbackStageId) {
+      setSelectedStageId(fallbackStageId);
     }
-  }, [selectedStageId, stages]);
+  }, [fallbackStageId]);
 
   useEffect(() => {
     if (!selectedStage) return;
@@ -2528,7 +2540,7 @@ export function PipelineSettings() {
                   const canInsertAfter = !isPipelineTerminalStageKind(stage.kind);
                   const tone = getPipelineStageColumnTone(stage.kind);
                   return (
-                    <div key={stage.id} className="flex items-start gap-2">
+                    <div key={stage.id} className="flex items-center gap-2">
                       <div className="flex flex-col items-start gap-1">
                         <button
                           type="button"
@@ -2575,7 +2587,7 @@ export function PipelineSettings() {
                         <button
                           type="button"
                           aria-label={`Insert stage after ${stage.name}`}
-                          className="mt-6 inline-flex h-8 w-8 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground hover:border-foreground hover:text-foreground"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground hover:border-foreground hover:text-foreground"
                           onClick={() => addStage.mutate(stage)}
                           disabled={addStage.isPending}
                         >
@@ -2583,7 +2595,7 @@ export function PipelineSettings() {
                         </button>
                       ) : null}
                       {index === stages.length - 1 ? null : (
-                        <span className="mt-10 h-px w-8 bg-border" aria-hidden="true" />
+                        <span className="h-px w-8 bg-border" aria-hidden="true" />
                       )}
                     </div>
                   );
