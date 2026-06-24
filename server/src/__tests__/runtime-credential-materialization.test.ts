@@ -236,6 +236,67 @@ describe("runtime credential materialization service", () => {
     ).toBeNull();
   });
 
+  it("extracts Claude credentials JSON runtime updates without accepting other material", () => {
+    expect(
+      byoSubscriptionCredentialMaterialFromRuntimeUpdate("claude", {
+        provider: "claude",
+        assets: {
+          "config-seed": {
+            files: [
+              {
+                relativePath: ".credentials.json",
+                contents: '{"oauthAccount":{"email":"user@example.com"}}',
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      provider: "claude",
+      kind: "credentials_json",
+      value: '{"oauthAccount":{"email":"user@example.com"}}',
+    });
+
+    expect(
+      byoSubscriptionCredentialMaterialFromRuntimeUpdate("claude", {
+        provider: "codex",
+        assets: {
+          "config-seed": {
+            files: [
+              {
+                relativePath: ".credentials.json",
+                contents: '{"refresh":"wrong-provider"}',
+              },
+            ],
+          },
+        },
+      }),
+    ).toBeNull();
+    expect(
+      byoSubscriptionCredentialMaterialFromRuntimeUpdate("claude", {
+        provider: "claude",
+        assets: {
+          "config-seed": {
+            files: [
+              {
+                relativePath: "credentials.json",
+                contents: '{"refresh":"wrong-file"}',
+              },
+            ],
+          },
+        },
+      }),
+    ).toBeNull();
+    expect(
+      byoSubscriptionCredentialMaterialFromRuntimeUpdate("claude", {
+        provider: "claude",
+        env: {
+          CLAUDE_CODE_OAUTH_TOKEN: "oauth-token",
+        },
+      }),
+    ).toBeNull();
+  });
+
   it("writes refreshed Codex runtime auth material back through the user-scoped store", async () => {
     const writeBackFromRuntime = vi.fn<NonNullable<ByoSubscriptionCredentialStore["writeBackFromRuntime"]>>(
       async () => undefined,
@@ -280,6 +341,54 @@ describe("runtime credential materialization service", () => {
         provider: "codex",
         kind: "auth_json",
         value: '{"refresh":"rotated"}',
+      },
+    });
+  });
+
+  it("writes refreshed Claude credentials JSON material back through the user-scoped store", async () => {
+    const writeBackFromRuntime = vi.fn<NonNullable<ByoSubscriptionCredentialStore["writeBackFromRuntime"]>>(
+      async () => undefined,
+    );
+
+    await expect(
+      writeBackByoSubscriptionRuntimeCredentialMaterialization({
+        store: {
+          resolveForRuntime: vi.fn(),
+          writeBackFromRuntime,
+        },
+        companyId: "company-1",
+        userId: "user-1",
+        provider: "claude",
+        agentId: "agent-1",
+        issueId: "issue-1",
+        heartbeatRunId: "run-1",
+        runtimeCredentialUpdates: {
+          provider: "claude",
+          assets: {
+            "config-seed": {
+              files: [
+                {
+                  relativePath: ".credentials.json",
+                  contents: '{"oauthAccount":{"email":"user@example.com"}}',
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ).resolves.toBe(true);
+
+    expect(writeBackFromRuntime).toHaveBeenCalledWith({
+      companyId: "company-1",
+      userId: "user-1",
+      provider: "claude",
+      agentId: "agent-1",
+      issueId: "issue-1",
+      heartbeatRunId: "run-1",
+      material: {
+        provider: "claude",
+        kind: "credentials_json",
+        value: '{"oauthAccount":{"email":"user@example.com"}}',
       },
     });
   });

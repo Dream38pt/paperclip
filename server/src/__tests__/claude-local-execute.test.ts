@@ -67,6 +67,7 @@ const payload = {
   paperclipApiUrl: process.env.PAPERCLIP_API_URL || null,
   paperclipApiKey: process.env.PAPERCLIP_API_KEY || null,
   paperclipApiBridgeMode: process.env.PAPERCLIP_API_BRIDGE_MODE || null,
+  claudeOauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN || null,
 };
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
@@ -168,6 +169,7 @@ type CapturePayload = {
   paperclipApiUrl?: string | null;
   paperclipApiKey?: string | null;
   paperclipApiBridgeMode?: string | null;
+  claudeOauthToken?: string | null;
   appendedSystemPromptFilePath?: string | null;
   appendedSystemPromptFileContents?: string | null;
 };
@@ -726,6 +728,66 @@ describe("claude execute", () => {
     }
   });
 
+  it("injects Claude OAuth runtime credentials into the CLI env while redacting invocation metadata", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-oauth-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+
+    let loggedCommand: string | null = null;
+    let loggedEnv: Record<string, string> = {};
+    try {
+      const result = await execute({
+        runId: "run-oauth-runtime-credential",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Claude Coder",
+          adapterType: "claude_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {},
+        executionTarget: {
+          kind: "local",
+          runtimeCredentialMaterialization: {
+            provider: "claude",
+            env: {
+              CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret",
+            },
+          },
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          loggedCommand = meta.command;
+          loggedEnv = meta.env ?? {};
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(loggedCommand).toBe(commandPath);
+      expect(loggedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe("***REDACTED***");
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.claudeOauthToken).toBe("oauth-secret");
+      expect(capture.argv.slice(0, 4)).toEqual(["--print", "-", "--output-format", "stream-json"]);
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("injects bridge env into sandbox-managed remote runs", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-sandbox-"));
     const localWorkspace = path.join(root, "workspace");
@@ -781,6 +843,19 @@ describe("claude execute", () => {
           remoteCwd: remoteWorkspace,
           timeoutMs: 30_000,
           runner: createLocalSandboxRunner(),
+          runtimeCredentialMaterialization: {
+            provider: "claude",
+            assets: {
+              "config-seed": {
+                files: [
+                  {
+                    relativePath: ".credentials.json",
+                    contents: '{"oauthAccount":{"email":"stored@example.com"}}',
+                  },
+                ],
+              },
+            },
+          },
         },
         authToken: "run-jwt-token",
         onLog: async () => {},
@@ -804,10 +879,25 @@ describe("claude execute", () => {
       );
       expect(capture.argv).not.toContain("--dangerously-skip-permissions");
       expect(capture.claudeConfigDir).toBe(path.join(remoteWorkspace, ".paperclip-runtime", "claude", "config"));
+      expect(capture.claudeConfigEntries).toContain(".credentials.json");
       expect(capture.claudeConfigEntries).toContain("settings.json");
       expect(capture.paperclipApiUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
       expect(capture.paperclipApiKey).not.toBe("run-jwt-token");
       expect(capture.paperclipApiBridgeMode).toBe("queue_v1");
+      expect(result.runtimeCredentialUpdates).toEqual({
+        provider: "claude",
+        assets: {
+          "config-seed": {
+            files: [
+              {
+                relativePath: ".credentials.json",
+                contents: '{"oauthAccount":{"email":"stored@example.com"}}',
+                mode: 0o600,
+              },
+            ],
+          },
+        },
+      });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

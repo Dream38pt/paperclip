@@ -198,6 +198,7 @@ export function subscriptionCredentialService(db: Db) {
       userId: string,
       provider: SubscriptionCredentialProvider,
       material: string,
+      expectedCredentialKind?: SubscriptionCredentialKind,
     ): Promise<SubscriptionCredentialReadModel> {
       const row = await findRow(companyId, userId, provider);
       if (!row) throw notFound("Subscription credential not found");
@@ -205,6 +206,11 @@ export function subscriptionCredentialService(db: Db) {
         throw unprocessable("Subscription credential is not active", { code: "credential_inactive" });
       }
       const credentialKind = row.credentialKind as SubscriptionCredentialKind;
+      if (expectedCredentialKind && credentialKind !== expectedCredentialKind) {
+        throw unprocessable("Runtime credential update kind does not match stored credential", {
+          code: "credential_kind_mismatch",
+        });
+      }
       assertKindMatchesProvider(provider, credentialKind);
       assertMaterialMatchesKind(credentialKind, material);
 

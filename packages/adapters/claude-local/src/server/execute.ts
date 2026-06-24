@@ -18,6 +18,7 @@ import {
   ensureAdapterExecutionTargetRuntimeCommandInstalled,
   materializeAdapterRuntimeCredentialAsset,
   prepareAdapterExecutionTargetRuntime,
+  readAdapterExecutionTargetTextFile,
   readAdapterExecutionTarget,
   resolveAdapterExecutionTargetTimeoutSec,
   resolveAdapterExecutionTargetCommandForLogs,
@@ -132,9 +133,28 @@ function isBedrockAuth(env: Record<string, string>): boolean {
   );
 }
 
+function hasExplicitClaudeApiOrBedrockAuth(env: Record<string, string>): boolean {
+  return hasNonEmptyEnvValue(env, "ANTHROPIC_API_KEY") || isBedrockAuth(env);
+}
+
+function suppressInheritedClaudeApiOrBedrockAuth(env: Record<string, string>) {
+  env.ANTHROPIC_API_KEY = "";
+  env.CLAUDE_CODE_USE_BEDROCK = "";
+  env.ANTHROPIC_BEDROCK_BASE_URL = "";
+}
+
 function resolveClaudeBillingType(env: Record<string, string>): "api" | "subscription" | "metered_api" {
   if (isBedrockAuth(env)) return "metered_api";
   return hasNonEmptyEnvValue(env, "ANTHROPIC_API_KEY") ? "api" : "subscription";
+}
+
+function claudeCredentialsJsonHasUsableAuth(contents: string): boolean {
+  try {
+    const parsed = JSON.parse(contents);
+    return Boolean(parsed) && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<ClaudeRuntimeConfig> {
@@ -175,6 +195,9 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
   const runtimeCredentialEnv = adapterRuntimeCredentialEnv(executionTarget);
   const runtimeCredentialEnvKeys = Object.keys(runtimeCredentialEnv);
+  const hasRuntimeCredentialMaterial =
+    runtimeCredentialEnvKeys.length > 0 ||
+    adapterRuntimeCredentialAssetFiles(executionTarget, "config-seed").length > 0;
   let effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
   const shapedWorkspaceEnv = shapePaperclipWorkspaceEnvForExecution({
     workspaceCwd: effectiveWorkspaceCwd,
@@ -273,7 +296,12 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   for (const [key, value] of Object.entries(shapedEnvConfig)) {
     if (typeof value === "string") env[key] = value;
   }
-  Object.assign(env, runtimeCredentialEnv);
+  if (!hasExplicitClaudeApiOrBedrockAuth(env)) {
+    Object.assign(env, runtimeCredentialEnv);
+    if (hasRuntimeCredentialMaterial) {
+      suppressInheritedClaudeApiOrBedrockAuth(env);
+    }
+  }
 
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
@@ -378,8 +406,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
   const executionTargetIsSandbox = executionTarget?.kind === "remote" && executionTarget.transport === "sandbox";
-  const claudeConfigCredentialFiles = adapterRuntimeCredentialAssetFiles(executionTarget, "config-seed");
-  const hasRuntimeClaudeConfigFiles = claudeConfigCredentialFiles.length > 0;
   const runtimeCredentialEnvKeys = Object.keys(adapterRuntimeCredentialEnv(executionTarget));
 
   const promptTemplate = asString(
@@ -392,6 +418,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const maxTurns = asNumber(config.maxTurnsPerRun, 0);
   const dangerouslySkipPermissions = asBoolean(config.dangerouslySkipPermissions, true);
   const configEnv = parseObject(config.env);
+  const hasExplicitClaudeRuntimeAuth = hasExplicitClaudeApiOrBedrockAuth(
+    Object.fromEntries(
+      Object.entries(configEnv).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    ),
+  );
+  const claudeConfigCredentialFiles = hasExplicitClaudeRuntimeAuth
+    ? []
+    : adapterRuntimeCredentialAssetFiles(executionTarget, "config-seed");
+  const hasRuntimeClaudeConfigFiles = claudeConfigCredentialFiles.length > 0;
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
   const workspaceSource = asString(workspaceContext.source, "");
@@ -632,6 +669,66 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
     }
   }
+  const readRefreshedClaudeCredentialUpdates =
+    async (): Promise<AdapterExecutionResult["runtimeCredentialUpdates"]> => {
+      const usesExplicitApiAuth = hasExplicitClaudeRuntimeAuth;
+      if (!hasRuntimeClaudeConfigFiles || hasExplicitClaudeConfigDir || usesExplicitApiAuth) return null;
+
+      const claudeConfigDir = remoteClaudeConfigDir ?? (!executionTargetIsRemote ? env.CLAUDE_CONFIG_DIR : null);
+      if (!claudeConfigDir) return null;
+
+      const credentialsPath = executionTargetIsRemote
+        ? path.posix.join(claudeConfigDir, ".credentials.json")
+        : path.join(claudeConfigDir, ".credentials.json");
+      const contents = await readAdapterExecutionTargetTextFile(
+        runId,
+        runtimeExecutionTarget,
+        credentialsPath,
+        {
+          cwd: effectiveExecutionCwd,
+          env: Object.fromEntries(
+            Object.entries(ensurePathInEnv({ ...process.env, ...env })).filter(
+              (entry): entry is [string, string] => typeof entry[1] === "string",
+            ),
+          ),
+          timeoutSec: 15,
+          graceSec: 5,
+          maxBytes: 32_768,
+        },
+      );
+      if (contents === null) {
+        throw new Error(
+          "Claude subscription .credentials.json was missing after the run; refusing to leave stored subscription credentials stale.",
+        );
+      }
+      if (!claudeCredentialsJsonHasUsableAuth(contents)) {
+        throw new Error(
+          "Claude subscription .credentials.json was not valid credential material after the run; refusing to overwrite stored credentials.",
+        );
+      }
+      return {
+        provider: "claude",
+        assets: {
+          "config-seed": {
+            files: [
+              {
+                relativePath: ".credentials.json",
+                contents,
+                mode: 0o600,
+              },
+            ],
+          },
+        },
+      };
+    };
+
+  const withRuntimeCredentialUpdates = async (
+    result: AdapterExecutionResult,
+  ): Promise<AdapterExecutionResult> => {
+    const runtimeCredentialUpdates = await readRefreshedClaudeCredentialUpdates();
+    return runtimeCredentialUpdates ? { ...result, runtimeCredentialUpdates } : result;
+  };
+
   let effectiveEffort = effort;
   if (executionTargetIsSandbox && effort) {
     const supportsEffort = await claudeCommandSupportsEffortFlag({
@@ -1092,10 +1189,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         }
       }
       const retry = await runAttempt(null);
-      return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
+      return await withRuntimeCredentialUpdates(
+        toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true }),
+      );
     }
 
-    return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
+    return await withRuntimeCredentialUpdates(
+      toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId }),
+    );
   } finally {
     if (paperclipBridge) {
       await paperclipBridge.stop();

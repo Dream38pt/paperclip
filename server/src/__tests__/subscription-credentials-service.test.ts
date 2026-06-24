@@ -274,6 +274,30 @@ describe("subscriptionCredentialService", () => {
     expect(result).not.toHaveProperty("material");
   });
 
+  it("rejects runtime material when the expected credential kind does not match the stored row", async () => {
+    const row = makeCredentialRow({
+      provider: "claude",
+      credentialKind: "claude_oauth_token",
+    });
+    const { db } = makeFakeDb({ findFirstRows: [row] });
+    const svc = subscriptionCredentialService(db);
+
+    await expect(
+      svc.updateMaterialFromRuntime(
+        row.companyId as string,
+        row.userId as string,
+        "claude",
+        '{"oauthAccount":{"email":"user@example.com"}}',
+        "claude_credentials_json",
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      details: { code: "credential_kind_mismatch" },
+    });
+
+    expect(mockSecretProvider.createSecret).not.toHaveBeenCalled();
+  });
+
   it("rejects decrypted material that does not match the stored integrity hash", async () => {
     const row = makeCredentialRow({ valueSha256: sha256Hex("different-token") });
     const { db } = makeFakeDb({ findFirstRows: [row] });

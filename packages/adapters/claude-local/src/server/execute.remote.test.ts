@@ -11,6 +11,7 @@ const {
   restoreWorkspaceFromSshExecution,
   syncDirectoryToSsh,
   startAdapterExecutionTargetPaperclipBridge,
+  readAdapterExecutionTargetTextFile,
 } = vi.hoisted(() => ({
   runChildProcess: vi.fn(async () => ({
     exitCode: 0,
@@ -38,6 +39,7 @@ const {
     },
     stop: async () => {},
   })),
+  readAdapterExecutionTargetTextFile: vi.fn(async (): Promise<string | null> => null),
 }));
 
 vi.mock("@paperclipai/adapter-utils/server-utils", async () => {
@@ -71,6 +73,7 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async () => {
   return {
     ...actual,
     startAdapterExecutionTargetPaperclipBridge,
+    readAdapterExecutionTargetTextFile,
   };
 });
 
@@ -81,6 +84,7 @@ describe("claude remote execution", () => {
 
   afterEach(async () => {
     vi.clearAllMocks();
+    readAdapterExecutionTargetTextFile.mockResolvedValue(null);
     while (cleanupDirs.length > 0) {
       const dir = cleanupDirs.pop();
       if (!dir) continue;
@@ -331,6 +335,161 @@ describe("claude remote execution", () => {
     const call = runChildProcess.mock.calls[0] as unknown as [string, string, string[]] | undefined;
     expect(call?.[2]).toContain("--resume");
     expect(call?.[2]).toContain("12345678-1234-4abc-9def-123456789012");
+  });
+
+  it("returns refreshed Claude subscription .credentials.json after a remote run", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-remote-auth-refresh-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    const managedRemoteWorkspace = "/remote/workspace/.paperclip-runtime/runs/run-auth-refresh/workspace";
+    await mkdir(workspaceDir, { recursive: true });
+    readAdapterExecutionTargetTextFile.mockResolvedValue('{"oauthAccount":{"email":"user@example.com"}}');
+
+    const result = await execute({
+      runId: "run-auth-refresh",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Claude Coder",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: "claude",
+      },
+      context: {
+        paperclipWorkspace: {
+          cwd: workspaceDir,
+          source: "project_primary",
+        },
+      },
+      executionTarget: {
+        kind: "remote",
+        transport: "ssh",
+        remoteCwd: "/remote/workspace",
+        runtimeCredentialMaterialization: {
+          provider: "claude",
+          assets: {
+            "config-seed": {
+              files: [
+                {
+                  relativePath: ".credentials.json",
+                  contents: '{"oauthAccount":{"email":"stored@example.com"}}',
+                },
+              ],
+            },
+          },
+        },
+        spec: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "PRIVATE KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 AAAA",
+          strictHostKeyChecking: true,
+        },
+      },
+      onLog: async () => {},
+    });
+
+    expect(readAdapterExecutionTargetTextFile).toHaveBeenCalledWith(
+      "run-auth-refresh",
+      expect.objectContaining({ kind: "remote", transport: "ssh" }),
+      `${managedRemoteWorkspace}/.paperclip-runtime/claude/config/.credentials.json`,
+      expect.objectContaining({
+        maxBytes: 32_768,
+      }),
+    );
+    expect(result.runtimeCredentialUpdates).toEqual({
+      provider: "claude",
+      assets: {
+        "config-seed": {
+          files: [
+            {
+              relativePath: ".credentials.json",
+              contents: '{"oauthAccount":{"email":"user@example.com"}}',
+              mode: 0o600,
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("does not let subscription credentials override explicit Claude API-key mode", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-remote-api-key-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    await mkdir(workspaceDir, { recursive: true });
+
+    const result = await execute({
+      runId: "run-api-key",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Claude Coder",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: "claude",
+        env: {
+          ANTHROPIC_API_KEY: "sk-ant-test",
+        },
+      },
+      context: {
+        paperclipWorkspace: {
+          cwd: workspaceDir,
+          source: "project_primary",
+        },
+      },
+      executionTarget: {
+        kind: "remote",
+        transport: "ssh",
+        remoteCwd: "/remote/workspace",
+        runtimeCredentialMaterialization: {
+          provider: "claude",
+          assets: {
+            "config-seed": {
+              files: [
+                {
+                  relativePath: ".credentials.json",
+                  contents: '{"oauthAccount":{"email":"subscription@example.com"}}',
+                },
+              ],
+            },
+          },
+        },
+        spec: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "PRIVATE KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 AAAA",
+          strictHostKeyChecking: true,
+        },
+      },
+      onLog: async () => {},
+    });
+
+    expect(readAdapterExecutionTargetTextFile).not.toHaveBeenCalled();
+    expect(result.runtimeCredentialUpdates).toBeUndefined();
   });
 
 });

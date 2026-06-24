@@ -1731,6 +1731,16 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+function hasExplicitClaudeApiOrBedrockRuntimeAuth(env: Record<string, unknown>): boolean {
+  const useBedrock = readNonEmptyString(env.CLAUDE_CODE_USE_BEDROCK);
+  return Boolean(
+    readNonEmptyString(env.ANTHROPIC_API_KEY) ||
+      useBedrock === "1" ||
+      useBedrock === "true" ||
+      readNonEmptyString(env.ANTHROPIC_BEDROCK_BASE_URL),
+  );
+}
+
 function readRequestedUserIdFromContext(contextSnapshot: Record<string, unknown>): string | null {
   const explicitRuntimeUserId =
     readNonEmptyString(contextSnapshot.runtimeCredentialUserId) ??
@@ -9162,10 +9172,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     };
     const adapterRuntimeCredentialProvider = providerForSubscriptionCredentialAdapter(agent.adapterType);
     const resolvedRuntimeEnv = parseObject(effectiveResolvedConfig.env);
-    const runtimeCredentialProvider =
-      adapterRuntimeCredentialProvider === "codex" && readNonEmptyString(resolvedRuntimeEnv.OPENAI_API_KEY)
-        ? null
-        : adapterRuntimeCredentialProvider;
+    const runtimeCredentialProvider = (() => {
+      if (adapterRuntimeCredentialProvider === "codex" && readNonEmptyString(resolvedRuntimeEnv.OPENAI_API_KEY)) {
+        return null;
+      }
+      if (adapterRuntimeCredentialProvider === "claude" && hasExplicitClaudeApiOrBedrockRuntimeAuth(resolvedRuntimeEnv)) {
+        return null;
+      }
+      return adapterRuntimeCredentialProvider;
+    })();
     const runtimeCredentialUserId = runtimeCredentialProvider
       ? await resolveRuntimeCredentialUserId({
           companyId: agent.companyId,

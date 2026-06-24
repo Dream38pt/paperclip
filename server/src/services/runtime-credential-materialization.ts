@@ -96,16 +96,25 @@ export function createSubscriptionCredentialRuntimeStore(db: Db): ByoSubscriptio
     async writeBackFromRuntime(input) {
       if (input.material.provider !== input.provider) return;
       switch (input.material.kind) {
+        case "credentials_json":
+          await credentials.updateMaterialFromRuntime(
+            input.companyId,
+            input.userId,
+            input.provider,
+            input.material.value,
+            "claude_credentials_json",
+          );
+          break;
         case "auth_json":
           await credentials.updateMaterialFromRuntime(
             input.companyId,
             input.userId,
             input.provider,
             input.material.value,
+            "codex_auth_json",
           );
           break;
         case "oauth_token":
-        case "credentials_json":
           break;
       }
     },
@@ -179,6 +188,18 @@ export function byoSubscriptionCredentialMaterialFromRuntimeUpdate(
       provider: "codex",
       kind: "auth_json",
       value: authJson.contents,
+    };
+  }
+
+  if (provider === "claude") {
+    const credentialsJson = normalized.assets?.["config-seed"]?.files.find(
+      (file) => file.relativePath === ".credentials.json" && typeof file.contents === "string",
+    );
+    if (!credentialsJson) return null;
+    return {
+      provider: "claude",
+      kind: "credentials_json",
+      value: credentialsJson.contents,
     };
   }
 
