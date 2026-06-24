@@ -2192,31 +2192,35 @@ export function PipelineSettings() {
         <div className="divide-y divide-border px-4">
           <FieldRow label="Create each piece in">
             <div className="space-y-1">
-              <select
-                aria-label="Create each piece in"
-                value={breakdownTargetPipelineId}
-                onChange={(event) => {
-                  setBreakdownTargetPipelineId(event.target.value);
-                  setBreakdownTargetStageKey("");
-                }}
-                className="h-10 w-full max-w-sm rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="">Choose a pipeline</option>
-                {breakdownTargetOptions.map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
-                ))}
-              </select>
-              {breakdownTargetPipelineId ? (
-                <Link
-                  to={`/pipelines/${breakdownTargetPipelineId}`}
-                  className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              <div className="flex w-full max-w-sm items-center">
+                <select
+                  aria-label="Create each piece in"
+                  value={breakdownTargetPipelineId}
+                  onChange={(event) => {
+                    setBreakdownTargetPipelineId(event.target.value);
+                    setBreakdownTargetStageKey("");
+                  }}
+                  className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm"
                 >
-                  {breakdownTargetPipeline?.name ?? "Selected pipeline"}
-                  <ArrowUpRight className="h-3 w-3" />
-                </Link>
-              ) : (
+                  <option value="">Choose a pipeline</option>
+                  {breakdownTargetOptions.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
+                  ))}
+                </select>
+                {breakdownTargetPipelineId ? (
+                  <Link
+                    to={`/pipelines/${breakdownTargetPipelineId}`}
+                    aria-label={`Open ${breakdownTargetPipeline?.name ?? "selected"} pipeline`}
+                    title={`Open ${breakdownTargetPipeline?.name ?? "selected"} pipeline`}
+                    className="ml-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <ArrowUpRight className="h-4 w-4" />
+                  </Link>
+                ) : null}
+              </div>
+              {!breakdownTargetPipelineId ? (
                 <p className="text-xs text-muted-foreground">A pipeline in this workspace</p>
-              )}
+              ) : null}
             </div>
           </FieldRow>
           <FieldRow label="starting at">
