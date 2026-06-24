@@ -84,6 +84,7 @@ import {
 
 /** Per-stage instructions document keys look like `stage-instructions:{stageId}`. */
 const STAGE_INSTRUCTIONS_PREFIX = "stage-instructions:";
+type PipelineRouteDb = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 const stageKindSchema = z.enum(["open", "working", "review", "done", "cancelled"]);
 const jsonObjectSchema = z.record(z.string(), z.unknown());
@@ -552,7 +553,7 @@ function mapPipelineCaseDocumentRevision(row: {
   return row;
 }
 
-async function getPipelineCaseDocumentRow(db: Db | any, input: { companyId: string; caseId: string; key: string }) {
+async function getPipelineCaseDocumentRow(db: PipelineRouteDb, input: { companyId: string; caseId: string; key: string }) {
   return db
     .select({ link: pipelineCaseDocuments, document: documents, revision: documentRevisions })
     .from(pipelineCaseDocuments)
@@ -1891,14 +1892,6 @@ export function pipelineRoutes(db: Db, options: Parameters<typeof pipelineServic
     const companyId = await assertCaseAccess(db, req, caseId);
     const actor = actorForMutation(req);
     const updated = await svc.patchCaseContent({ companyId, caseId, ...req.body, actor });
-    if (req.body.workspaceRef !== undefined) {
-      const [withWorkspace] = await db.update(pipelineCases)
-        .set({ workspaceRef: req.body.workspaceRef, updatedAt: new Date() })
-        .where(eq(pipelineCases.id, caseId))
-        .returning();
-      res.json(withWorkspace);
-      return;
-    }
     res.json(updated);
   });
 

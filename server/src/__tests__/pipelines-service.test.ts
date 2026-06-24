@@ -941,6 +941,43 @@ describeEmbeddedPostgres("pipelineService", () => {
     expect(rootEvents.map((event) => event.type)).toEqual(["ingested", "children_terminal", "transitioned"]);
   });
 
+  it("auto-advances a leased parent when child completion triggers a system transition", async () => {
+    const company = await seedCompany();
+    const pipeline = await svc.createPipeline({
+      companyId: company.id,
+      key: "auto-children-lease",
+      name: "Auto children lease",
+      actor: userActor,
+      stages: [
+        { key: "intake", name: "Intake", kind: "open", config: { autoAdvanceOnChildrenTerminal: "done" } },
+        { key: "done", name: "Done", kind: "done" },
+        { key: "cancelled", name: "Cancelled", kind: "cancelled" },
+      ],
+    });
+    const root = await svc.ingestCase({ companyId: company.id, pipelineId: pipeline.id, caseKey: "leased-root", title: "Root", actor: userActor });
+    const child = await svc.ingestCase({
+      companyId: company.id,
+      pipelineId: pipeline.id,
+      caseKey: "leased-child",
+      title: "Child",
+      parentCaseId: root.case.id,
+      actor: userActor,
+    });
+    await svc.claimCase({
+      companyId: company.id,
+      caseId: root.case.id,
+      actor: { type: "user", userId: "reviewer" },
+    });
+
+    await svc.transitionCase({ companyId: company.id, caseId: child.case.id, toStageKey: "done", expectedVersion: 1, actor: userActor });
+
+    const [freshRoot] = await db.select().from(pipelineCases).where(eq(pipelineCases.id, root.case.id));
+    expect(freshRoot!.terminalKind).toBe("done");
+    expect(freshRoot!.leaseToken).toBeNull();
+    const rootEvents = await svc.listCaseEvents(company.id, root.case.id);
+    expect(rootEvents.map((event) => event.type)).toEqual(["ingested", "claimed", "children_terminal", "transitioned"]);
+  });
+
   it("records suggestion supersede, accept, and dismiss lifecycles", async () => {
     const { company, pipeline } = await seedPipeline();
     const created = await svc.ingestCase({

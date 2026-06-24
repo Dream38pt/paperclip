@@ -248,6 +248,35 @@ describeEmbeddedPostgres("pipeline routes", () => {
     await http.delete(`/api/pipelines/${pipelineId}/stages/${stageId}?moveCasesToStageId=${qaStage.body.id}`).expect(200);
   });
 
+  it("patches case content and workspaceRef in one service transaction", async () => {
+    const company = await seedCompany();
+    const http = request(app(boardActor));
+    const pipeline = await http
+      .post(`/api/companies/${company.id}/pipelines`)
+      .send({ key: "workspace-patch", name: "Workspace patch" })
+      .expect(201);
+    const created = await http
+      .post(`/api/pipelines/${pipeline.body.id}/cases`)
+      .send({ caseKey: "workspace-case", title: "Workspace case" })
+      .expect(201);
+
+    const patched = await http
+      .patch(`/api/cases/${created.body.case.id}`)
+      .send({
+        title: "Workspace case updated",
+        workspaceRef: { workspacePath: "exports/workspace-case", name: "Workspace case files" },
+        expectedVersion: 1,
+      })
+      .expect(200);
+
+    expect(patched.body.title).toBe("Workspace case updated");
+    expect(patched.body.version).toBe(2);
+    expect(patched.body.workspaceRef).toEqual({ workspacePath: "exports/workspace-case", name: "Workspace case files" });
+    const events = await db.select().from(pipelineCaseEvents).where(eq(pipelineCaseEvents.caseId, created.body.case.id));
+    expect(events.map((event) => event.type)).toEqual(["ingested", "updated"]);
+    expect(events[1]!.payload).toMatchObject({ materialChanged: true, workspaceRefChanged: true });
+  });
+
   it("writes an audit event when an agent removes a case issue link", async () => {
     const company = await seedCompany();
     const [agent] = await db.insert(agents).values({

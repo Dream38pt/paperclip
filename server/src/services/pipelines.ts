@@ -603,6 +603,7 @@ function leaseOwner(row: typeof pipelineCases.$inferSelect) {
 function actorOwnsLease(row: typeof pipelineCases.$inferSelect, actor: PipelineActor, leaseToken?: string | null) {
   if (!row.leaseToken) return true;
   if (leaseToken && leaseToken === row.leaseToken) return true;
+  if (actor.type === "system") return true;
   if (actor.type === "agent") return row.leaseOwnerType === "agent" && row.leaseAgentId === actor.agentId;
   if (actor.type === "user") return row.leaseOwnerType === "user" && row.leaseUserId === actor.userId;
   return false;
@@ -1609,8 +1610,20 @@ async function hasCaseEvent(db: PipelineDb, caseId: string, type: string) {
 async function hasChildrenTerminalEventForRollup(
   db: PipelineDb,
   caseId: string,
+  stageId: string,
   rollup: Awaited<ReturnType<typeof computeCaseRollup>>,
 ) {
+  const stageEntry = await db
+    .select({ createdAt: pipelineCaseEvents.createdAt })
+    .from(pipelineCaseEvents)
+    .where(and(
+      eq(pipelineCaseEvents.caseId, caseId),
+      inArray(pipelineCaseEvents.type, ["ingested", "transitioned", "automation_retry_dispatched"]),
+      eq(pipelineCaseEvents.toStageId, stageId),
+    ))
+    .orderBy(desc(pipelineCaseEvents.createdAt))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
   const row = await db
     .select({ id: pipelineCaseEvents.id })
     .from(pipelineCaseEvents)
@@ -1618,6 +1631,7 @@ async function hasChildrenTerminalEventForRollup(
       eq(pipelineCaseEvents.caseId, caseId),
       eq(pipelineCaseEvents.type, "children_terminal"),
       sql`${pipelineCaseEvents.payload} -> 'rollup' = ${JSON.stringify(rollup)}::jsonb`,
+      stageEntry ? sql`${pipelineCaseEvents.createdAt} > ${stageEntry.createdAt.toISOString()}::timestamptz` : undefined,
     ))
     .limit(1)
     .then((rows) => rows[0] ?? null);
@@ -2955,6 +2969,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       summary?: string | null;
       fields?: Record<string, unknown>;
       parentCaseId?: string | null;
+      workspaceRef?: Record<string, unknown> | null;
       expectedVersion?: number;
       leaseToken?: string | null;
       actor: PipelineActor;
@@ -2977,9 +2992,10 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
     const summaryChanged = input.summary !== undefined && input.summary !== current.summary;
     const fieldsChanged = input.fields !== undefined && !isDeepStrictEqual(input.fields, current.fields);
     const parentCaseChanged = input.parentCaseId !== undefined && input.parentCaseId !== current.parentCaseId;
+    const workspaceRefChanged = input.workspaceRef !== undefined && !isDeepStrictEqual(input.workspaceRef, current.workspaceRef);
     const materialChanged = titleChanged || summaryChanged || fieldsChanged;
     const visibleMetadataChanged = titleChanged || summaryChanged;
-    if (!materialChanged && !visibleMetadataChanged && !parentCaseChanged) {
+    if (!materialChanged && !visibleMetadataChanged && !parentCaseChanged && !workspaceRefChanged) {
       return { case: current, event: null };
     }
 
@@ -2991,6 +3007,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
     if (summaryChanged) patch.summary = input.summary;
     if (fieldsChanged) patch.fields = input.fields;
     if (parentCaseChanged) patch.parentCaseId = input.parentCaseId;
+    if (workspaceRefChanged) patch.workspaceRef = input.workspaceRef;
 
     const [updated] = await tx
       .update(pipelineCases)
@@ -3002,18 +3019,21 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       throw conflict("Pipeline case version conflict", conflictDetailsForCase(latest.case, latest.stage));
     }
 
-    const event = await writeCaseEvent(tx, {
-      companyId: input.companyId,
-      caseId: updated.id,
-      type: "updated",
-      actor: input.actor,
-      payload: {
-        previousVersion: current.version,
-        version: updated.version,
-        parentCaseChanged,
-        materialChanged,
-      },
-    });
+    const event = materialChanged || visibleMetadataChanged || parentCaseChanged
+      ? await writeCaseEvent(tx, {
+        companyId: input.companyId,
+        caseId: updated.id,
+        type: "updated",
+        actor: input.actor,
+        payload: {
+          previousVersion: current.version,
+          version: updated.version,
+          parentCaseChanged,
+          materialChanged,
+          workspaceRefChanged,
+        },
+      })
+      : null;
     if (parentCaseChanged) {
       const terminalDelta = isTerminalKind(current.terminalKind) ? 1 : 0;
       await adjustParentCounts(tx, {
@@ -3256,7 +3276,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       if (
         !rollup.complete ||
         (rollup.total === 0 && !gate.explicitZeroChildrenPass) ||
-        await hasChildrenTerminalEventForRollup(tx, ancestor.case.id, rollup)
+        await hasChildrenTerminalEventForRollup(tx, ancestor.case.id, ancestor.stage.id, rollup)
       ) {
         continue;
       }
