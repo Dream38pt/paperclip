@@ -2051,8 +2051,6 @@ function ProviderVaultCard({
 }) {
   const blockReason = getProviderConfigBlockReason(config);
   const details = config.healthDetails;
-  const canRefreshRemoteSecrets =
-    config.provider === "aws_secrets_manager" && !blockReason;
   return (
     <div className="rounded-md border border-border bg-background p-4">
       <div className="flex items-start gap-3">
@@ -2105,11 +2103,11 @@ function ProviderVaultCard({
             variant="outline"
             size="sm"
             onClick={onImportSecrets}
-            disabled={pending || !canRefreshRemoteSecrets}
+            disabled={pending || Boolean(blockReason)}
             title={
-              canRefreshRemoteSecrets
-                ? "Refresh AWS metadata and import existing secrets"
-                : blockReason ?? "This vault cannot refresh secrets right now."
+              blockReason
+                ? blockReason
+                : "Refresh AWS metadata and import existing secrets"
             }
             data-testid={`provider-vault-refresh-secrets-${config.id}`}
           >
