@@ -1,4 +1,4 @@
-import { AlertTriangle, Clock, Pause, User, Wrench } from "lucide-react";
+import { AlertTriangle, Clock, Pause, RefreshCw, User, Wrench } from "lucide-react";
 import type { ComponentType } from "react";
 import type { IssueBlockedInboxSeverity } from "@paperclipai/shared";
 import { cn } from "../lib/utils";
@@ -23,6 +23,8 @@ const VARIANT_STYLES: Record<BlockedReasonVariant, string> = {
     "border-violet-300/70 bg-violet-50 text-violet-800 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300",
   recovery_required:
     "border-cyan-300/70 bg-cyan-50 text-cyan-800 dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-300",
+  recovery_needed:
+    "border-blue-300/70 bg-blue-50 text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300",
   stalled:
     "border-amber-400/70 bg-amber-100 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200",
   needs_attention:
@@ -36,6 +38,7 @@ const VARIANT_STYLES: Record<BlockedReasonVariant, string> = {
 const VARIANT_ICONS: Record<BlockedReasonVariant, IconComponent> = {
   needs_decision: Clock,
   recovery_required: Wrench,
+  recovery_needed: RefreshCw,
   stalled: AlertTriangle,
   needs_attention: AlertTriangle,
   external_wait: User,
