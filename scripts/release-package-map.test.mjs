@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildReleasePackageJson,
   buildReleasePackagePlan,
   checkConfiguration,
   findUnpublishableWorkspaceEdges,
@@ -97,6 +98,29 @@ test("guard ignores non-workspace specs, non-internal deps, and edges from off-t
   ]);
 
   assert.deepEqual(problems, []);
+});
+
+
+test("release package json applies publishConfig entrypoints and rewrites workspace deps", () => {
+  const result = buildReleasePackageJson({
+    name: "@paperclipai/db",
+    version: "0.3.1",
+    exports: { ".": "./src/index.ts" },
+    publishConfig: {
+      access: "public",
+      exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
+      main: "./dist/index.js",
+      types: "./dist/index.d.ts",
+    },
+    dependencies: { "@paperclipai/shared": "workspace:*" },
+  }, "2026.618.1-p4b.2");
+
+  assert.equal(result.version, "2026.618.1-p4b.2");
+  assert.deepEqual(result.exports, { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } });
+  assert.equal(result.main, "./dist/index.js");
+  assert.equal(result.types, "./dist/index.d.ts");
+  assert.deepEqual(result.publishConfig, { access: "public" });
+  assert.deepEqual(result.dependencies, { "@paperclipai/shared": "2026.618.1-p4b.2" });
 });
 
 test("the live release manifest has no unpublishable workspace edges", () => {

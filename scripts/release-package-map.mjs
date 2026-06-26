@@ -227,18 +227,46 @@ function replaceWorkspaceDeps(deps, version) {
   return next;
 }
 
+function applyPublishConfigEntrypoints(pkg) {
+  const publishConfig = pkg.publishConfig;
+  if (!publishConfig || typeof publishConfig !== "object" || Array.isArray(publishConfig)) return pkg;
+
+  const nextPublishConfig = { ...publishConfig };
+  const nextPkg = { ...pkg };
+
+  if (publishConfig.exports !== undefined) {
+    nextPkg.exports = publishConfig.exports;
+    delete nextPublishConfig.exports;
+  }
+  if (publishConfig.main !== undefined) {
+    nextPkg.main = publishConfig.main;
+    delete nextPublishConfig.main;
+  }
+  if (publishConfig.types !== undefined) {
+    nextPkg.types = publishConfig.types;
+    delete nextPublishConfig.types;
+  }
+
+  nextPkg.publishConfig = nextPublishConfig;
+  return nextPkg;
+}
+
+function buildReleasePackageJson(pkg, version) {
+  return applyPublishConfigEntrypoints({
+    ...pkg,
+    version,
+    dependencies: replaceWorkspaceDeps(pkg.dependencies, version),
+    optionalDependencies: replaceWorkspaceDeps(pkg.optionalDependencies, version),
+    peerDependencies: replaceWorkspaceDeps(pkg.peerDependencies, version),
+    devDependencies: replaceWorkspaceDeps(pkg.devDependencies, version),
+  });
+}
+
 function setVersion(version) {
   const packages = getReleasePackages();
 
   for (const pkg of packages) {
-    const nextPkg = {
-      ...pkg.pkg,
-      version,
-      dependencies: replaceWorkspaceDeps(pkg.pkg.dependencies, version),
-      optionalDependencies: replaceWorkspaceDeps(pkg.pkg.optionalDependencies, version),
-      peerDependencies: replaceWorkspaceDeps(pkg.pkg.peerDependencies, version),
-      devDependencies: replaceWorkspaceDeps(pkg.pkg.devDependencies, version),
-    };
+    const nextPkg = buildReleasePackageJson(pkg.pkg, version);
 
     writeFileSync(pkg.pkgPath, `${JSON.stringify(nextPkg, null, 2)}\n`);
   }
@@ -321,6 +349,7 @@ if (isDirectRun) {
 }
 
 export {
+  buildReleasePackageJson,
   buildReleasePackagePlan,
   checkConfiguration,
   discoverPublicPackages,
