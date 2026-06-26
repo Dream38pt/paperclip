@@ -327,6 +327,47 @@ describe("Inbox toolbar", () => {
     });
   });
 
+  it("includes pending confirmation tasks in Mine with a separate actions-required counter", async () => {
+    routerMock.location.pathname = "/inbox/mine";
+    const actionIssue = createIssue({
+      id: "issue-action",
+      identifier: "PAP-2001",
+      title: "Waiting for board GO",
+      lastActivityAt: new Date("2026-03-11T04:00:00.000Z"),
+    });
+    apiMocks.issuesList.mockImplementation((_companyId: string, filters?: { hasPendingActionInteraction?: boolean }) => {
+      if (filters?.hasPendingActionInteraction) return Promise.resolve([actionIssue]);
+      return Promise.resolve([]);
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: 0 } },
+    });
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Inbox />
+        </QueryClientProvider>,
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("Waiting for board GO");
+    });
+    expect(apiMocks.issuesList).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({ hasPendingActionInteraction: true }),
+    );
+    expect(container.textContent).toContain("1 action required");
+    expect(container.textContent).toContain("Needs action");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("syncs hover with j/k selection on inbox rows", async () => {
     routerMock.location.pathname = "/inbox/mine";
     const issueA = createIssue({ id: "issue-a", identifier: "PAP-1001", title: "First inbox row" });

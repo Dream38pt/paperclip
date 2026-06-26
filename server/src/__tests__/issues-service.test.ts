@@ -160,6 +160,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     await db.delete(issueComments);
     await db.delete(issueRelations);
     await db.delete(issueDocuments);
+    await db.delete(issueThreadInteractions);
     await db.delete(issueInboxArchives);
     await db.delete(activityLog);
     await db.delete(issues);
@@ -915,6 +916,74 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
 
     expect(withPlan.map((issue) => issue.id)).toEqual([withPlanId]);
     expect(withoutPlan.map((issue) => issue.id)).toEqual([withoutPlanId]);
+  });
+
+  it("filters issues by pending GO/NO-GO interactions", async () => {
+    const companyId = randomUUID();
+    const pendingConfirmationIssueId = randomUUID();
+    const pendingQuestionIssueId = randomUUID();
+    const acceptedConfirmationIssueId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: pendingConfirmationIssueId,
+        companyId,
+        title: "Needs board confirmation",
+        status: "in_review",
+        priority: "high",
+      },
+      {
+        id: pendingQuestionIssueId,
+        companyId,
+        title: "Needs answers",
+        status: "in_review",
+        priority: "high",
+      },
+      {
+        id: acceptedConfirmationIssueId,
+        companyId,
+        title: "Already accepted",
+        status: "in_review",
+        priority: "high",
+      },
+    ]);
+
+    await db.insert(issueThreadInteractions).values([
+      {
+        companyId,
+        issueId: pendingConfirmationIssueId,
+        kind: "request_confirmation",
+        status: "pending",
+        payload: { version: 1, prompt: "GO?" },
+      },
+      {
+        companyId,
+        issueId: pendingQuestionIssueId,
+        kind: "ask_user_questions",
+        status: "pending",
+        payload: { version: 1, questions: [] },
+      },
+      {
+        companyId,
+        issueId: acceptedConfirmationIssueId,
+        kind: "request_confirmation",
+        status: "accepted",
+        payload: { version: 1, prompt: "GO?" },
+        result: { version: 1, outcome: "accepted" },
+        resolvedAt: new Date("2026-03-11T00:00:00.000Z"),
+      },
+    ]);
+
+    const result = await svc.list(companyId, { hasPendingActionInteraction: true });
+
+    expect(result.map((issue) => issue.id)).toEqual([pendingConfirmationIssueId]);
   });
 
   it("can page issues by most recently updated before priority", async () => {

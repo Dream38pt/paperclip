@@ -732,6 +732,14 @@ export function getRecentTouchedIssues(issues: Issue[]): Issue[] {
   return [...issues].sort(sortIssuesByMostRecentActivity).slice(0, RECENT_ISSUES_LIMIT);
 }
 
+export function mergeInboxIssuesById(...issueLists: Issue[][]): Issue[] {
+  const byId = new Map<string, Issue>();
+  for (const issue of issueLists.flat()) {
+    byId.set(issue.id, issue);
+  }
+  return [...byId.values()].sort(sortIssuesByMostRecentActivity).slice(0, RECENT_ISSUES_LIMIT);
+}
+
 export function getUnreadTouchedIssues(issues: Issue[]): Issue[] {
   return issues.filter((issue) => issue.isUnreadForMe);
 }

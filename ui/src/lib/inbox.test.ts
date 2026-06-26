@@ -37,6 +37,7 @@ import {
   loadCollapsedInboxGroupKeys,
   loadLastInboxTab,
   matchesInboxIssueSearch,
+  mergeInboxIssuesById,
   normalizeInboxIssueColumns,
   RECENT_ISSUES_LIMIT,
   resolveInboxNestingEnabled,
@@ -761,6 +762,20 @@ describe("inbox helpers", () => {
       "recent",
       "older",
     ]);
+  });
+
+  it("merges needs-action issues into inbox issue lists without duplicates", () => {
+    const older = makeIssue("older", false);
+    older.lastActivityAt = new Date("2026-03-11T01:00:00.000Z");
+    const action = makeIssue("action", false);
+    action.lastActivityAt = new Date("2026-03-11T03:00:00.000Z");
+    const duplicate = makeIssue("older", true);
+    duplicate.lastActivityAt = new Date("2026-03-11T02:00:00.000Z");
+
+    const merged = mergeInboxIssuesById([older], [action, duplicate]);
+
+    expect(merged.map((issue) => issue.id)).toEqual(["action", "older"]);
+    expect(merged.find((issue) => issue.id === "older")?.isUnreadForMe).toBe(true);
   });
 
   it("can include sections on recent without forcing them to be unread", () => {
