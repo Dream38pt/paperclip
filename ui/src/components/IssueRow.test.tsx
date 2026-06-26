@@ -187,6 +187,40 @@ describe("IssueRow", () => {
     });
   });
 
+  it("renders an attention chip for issues waiting on human confirmation", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(<IssueRow issue={createIssue({
+        blockedInboxAttention: {
+          kind: "blocked",
+          state: "awaiting_decision",
+          reason: "pending_user_decision",
+          severity: "medium",
+          stoppedSinceAt: null,
+          owner: { type: "user", agentId: null, userId: "user-1", label: "Board" },
+          action: { label: "Respond", detail: null },
+          sourceIssue: null,
+          leafIssue: null,
+          recoveryIssue: null,
+          approvalId: null,
+          interactionId: "interaction-1",
+          sampleIssueIdentifier: "PAP-1",
+          redaction: { externalDetailsRedacted: false, secretFieldsOmitted: true },
+        },
+      })} />);
+    });
+
+    const chip = container.querySelector("[data-testid='issue-attention-chip']");
+    expect(chip).not.toBeNull();
+    expect(chip?.getAttribute("data-attention-kind")).toBe("confirmation_required");
+    expect(chip?.textContent).toBe("Confirmation requise");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("passes the visible row issue into the navigation prefetch path", () => {
     const root = createRoot(container);
 

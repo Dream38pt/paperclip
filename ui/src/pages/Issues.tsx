@@ -143,6 +143,7 @@ export function Issues() {
       participantAgentId,
       workspaceId: workspaceIdFilter,
       includeRoutineExecutions: true,
+      includeBlockedInboxAttention: true,
       limit: issuePageSize,
       offset: pageParam,
       sortField: "updated",

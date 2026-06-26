@@ -21,6 +21,7 @@ import { Identity } from "../components/Identity";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents } from "../lib/utils";
 import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
+import { countIssuesNeedingAttention, getHighestIssueAttentionState, type IssueAttentionState } from "../lib/issueAttention";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -66,8 +67,8 @@ export function Dashboard() {
   });
 
   const { data: issues } = useQuery({
-    queryKey: queryKeys.issues.list(selectedCompanyId!),
-    queryFn: () => issuesApi.list(selectedCompanyId!),
+    queryKey: [...queryKeys.issues.list(selectedCompanyId!), "with-attention"],
+    queryFn: () => issuesApi.list(selectedCompanyId!, { includeBlockedInboxAttention: true }),
     enabled: !!selectedCompanyId,
   });
 
@@ -89,6 +90,8 @@ export function Dashboard() {
   );
 
   const recentIssues = issues ? getRecentIssues(issues) : [];
+  const attentionIssueCount = countIssuesNeedingAttention(issues ?? []);
+  const highestAttentionState = getHighestIssueAttentionState(issues ?? []);
   const recentActivity = useMemo(() => (activity ?? []).slice(0, 10), [activity]);
 
   useEffect(() => {
@@ -256,6 +259,11 @@ export function Dashboard() {
               value={data.tasks.inProgress}
               label="Tasks In Progress"
               to="/issues"
+              badge={
+                attentionIssueCount > 0 && highestAttentionState ? (
+                  <DashboardAttentionBadge state={highestAttentionState} count={attentionIssueCount} />
+                ) : null
+              }
               description={
                 <span>
                   {data.tasks.open} open{", "}
@@ -393,4 +401,43 @@ export function Dashboard() {
       )}
     </div>
   );
+}
+
+function DashboardAttentionBadge({
+  state,
+  count,
+}: {
+  state: IssueAttentionState;
+  count: number;
+}) {
+  return (
+    <span
+      data-testid="dashboard-attention-badge"
+      data-attention-kind={state.kind}
+      className={cn(
+        "inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[10px] font-medium leading-tight sm:text-[11px]",
+        dashboardAttentionToneClass(state.tone),
+      )}
+      title={`${count} issue${count === 1 ? "" : "s"} attendent une action humaine`}
+      aria-label={`${count} issue${count === 1 ? "" : "s"} attendent une action humaine: ${state.label}`}
+    >
+      <span className="truncate">
+        {count} {count === 1 ? "issue" : "issues"} · {state.label}
+      </span>
+    </span>
+  );
+}
+
+function dashboardAttentionToneClass(tone: IssueAttentionState["tone"]) {
+  switch (tone) {
+    case "red":
+      return "border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-300";
+    case "orange":
+      return "border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300";
+    case "blue":
+      return "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300";
+    case "amber":
+    default:
+      return "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
 }

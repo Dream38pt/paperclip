@@ -605,7 +605,7 @@ export function ExecutionWorkspaceDetail() {
     queryKey: workspace
       ? queryKeys.issues.listByExecutionWorkspace(workspace.companyId, workspace.id)
       : ["issues", "__execution-workspace__", "__none__"],
-    queryFn: () => issuesApi.list(workspace!.companyId, { executionWorkspaceId: workspace!.id }),
+    queryFn: () => issuesApi.list(workspace!.companyId, { executionWorkspaceId: workspace!.id, includeBlockedInboxAttention: true }),
     enabled: Boolean(workspace?.companyId),
   });
   const linkedIssues = linkedIssuesQuery.data ?? [];
