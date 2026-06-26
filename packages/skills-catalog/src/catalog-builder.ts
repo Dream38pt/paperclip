@@ -473,7 +473,7 @@ function isRecoverableReferencedFetchError(error: string) {
   const statusMatch = /HTTP (\d+)/.exec(error);
   if (!statusMatch) return true;
   const status = Number(statusMatch[1]);
-  return status === 403 || status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+  return status === 400 || status === 403 || status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
 }
 
 async function readReferencedSkillDescriptor(
