@@ -336,6 +336,7 @@ export interface IssueFilters {
   includePluginOperations?: boolean;
   includeBlockedBy?: boolean;
   includeBlockedInboxAttention?: boolean;
+  hasPendingActionInteraction?: boolean;
   hasPlanDocument?: boolean;
   lowTrustBoundary?: LowTrustBoundary & { companyId: string };
   q?: string;
@@ -2426,6 +2427,22 @@ function hasPlanDocumentCondition(companyId: string, hasPlanDocument: boolean): 
   return hasPlanDocument ? existsPlanDocument : sql<boolean>`NOT ${existsPlanDocument}`;
 }
 
+function hasPendingActionInteractionCondition(companyId: string, hasPendingActionInteraction: boolean): SQL {
+  const existsPendingActionInteraction = sql<boolean>`
+    EXISTS (
+      SELECT 1
+      FROM ${issueThreadInteractions}
+      WHERE ${issueThreadInteractions.companyId} = ${companyId}
+        AND ${issueThreadInteractions.issueId} = ${issues.id}
+        AND ${issueThreadInteractions.status} = 'pending'
+        AND ${issueThreadInteractions.kind} IN ('request_confirmation', 'request_checkbox_confirmation')
+    )
+  `;
+  return hasPendingActionInteraction
+    ? existsPendingActionInteraction
+    : sql<boolean>`NOT ${existsPendingActionInteraction}`;
+}
+
 function isoDate(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -4268,6 +4285,9 @@ export function issueService(db: Db) {
       if (filters?.hasPlanDocument !== undefined) {
         conditions.push(hasPlanDocumentCondition(companyId, filters.hasPlanDocument));
       }
+      if (filters?.hasPendingActionInteraction !== undefined) {
+        conditions.push(hasPendingActionInteractionCondition(companyId, filters.hasPendingActionInteraction));
+      }
       if (!shouldIncludePluginOperationIssues(filters)) {
         conditions.push(nonPluginOperationIssueCondition());
       }
@@ -4437,6 +4457,9 @@ export function issueService(db: Db) {
       if (filters?.originId) conditions.push(eq(issues.originId, filters.originId));
       if (filters?.hasPlanDocument !== undefined) {
         conditions.push(hasPlanDocumentCondition(companyId, filters.hasPlanDocument));
+      }
+      if (filters?.hasPendingActionInteraction !== undefined) {
+        conditions.push(hasPendingActionInteractionCondition(companyId, filters.hasPendingActionInteraction));
       }
       if (!shouldIncludePluginOperationIssues(filters)) conditions.push(nonPluginOperationIssueCondition());
       const [row] = await db

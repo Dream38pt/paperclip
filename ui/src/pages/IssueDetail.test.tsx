@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Agent, Issue, IssueAttachment, IssueComment, IssueTreeControlPreview, IssueTreeHold, IssueWorkProduct } from "@paperclipai/shared";
+import type { Agent, Issue, IssueAttachment, IssueComment, IssueThreadInteraction, IssueTreeControlPreview, IssueTreeHold, IssueWorkProduct } from "@paperclipai/shared";
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
 import { NavigationType } from "react-router-dom";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { canBoardResolveRecoveryAction, IssueDetail, shouldScrollIssueDetailToTopOnNavigation } from "./IssueDetail";
+import { canBoardResolveRecoveryAction, IssueDetail, isPendingGoNoGoInteraction, shouldScrollIssueDetailToTopOnNavigation } from "./IssueDetail";
 import { queryKeys } from "../lib/queryKeys";
 
 const mockIssuesApi = vi.hoisted(() => ({
@@ -15,6 +15,7 @@ const mockIssuesApi = vi.hoisted(() => ({
   list: vi.fn(),
   listAcceptedPlanDecompositions: vi.fn(),
   listComments: vi.fn(),
+  listInteractions: vi.fn(),
   listAttachments: vi.fn(),
   listWorkProducts: vi.fn(),
   listFeedbackVotes: vi.fn(),
@@ -28,6 +29,10 @@ const mockIssuesApi = vi.hoisted(() => ({
   archiveFromInbox: vi.fn(),
   addComment: vi.fn(),
   cancelComment: vi.fn(),
+  acceptInteraction: vi.fn(),
+  rejectInteraction: vi.fn(),
+  respondToInteraction: vi.fn(),
+  cancelInteraction: vi.fn(),
   upsertFeedbackVote: vi.fn(),
   uploadAttachment: vi.fn(),
   deleteAttachment: vi.fn(),
@@ -253,6 +258,12 @@ vi.mock("../components/IssueChatThread", () => ({
   },
 }));
 
+vi.mock("../components/IssueThreadInteractionCard", () => ({
+  IssueThreadInteractionCard: ({ interaction }: { interaction: IssueThreadInteraction }) => (
+    <div data-testid="issue-thread-interaction-card">{interaction.title ?? interaction.kind}</div>
+  ),
+}));
+
 vi.mock("../components/IssueDocumentsSection", () => ({
   IssueDocumentsSection: () => <div>Documents</div>,
 }));
@@ -467,6 +478,37 @@ function createIssueComment(overrides: Partial<IssueComment> = {}): IssueComment
     updatedAt: new Date("2026-04-21T00:00:05.000Z"),
     ...overrides,
   };
+}
+
+function createInteraction(overrides: Partial<IssueThreadInteraction> = {}): IssueThreadInteraction {
+  return {
+    id: "interaction-1",
+    companyId: "company-1",
+    issueId: "issue-1",
+    kind: "request_confirmation",
+    status: "pending",
+    continuationPolicy: "wake_assignee",
+    title: "Approve plan",
+    summary: null,
+    idempotencyKey: null,
+    sourceCommentId: null,
+    sourceRunId: null,
+    createdByAgentId: null,
+    createdByUserId: null,
+    resolvedByAgentId: null,
+    resolvedByUserId: null,
+    payload: {
+      version: 1,
+      prompt: "Approve this plan?",
+      acceptLabel: "GO",
+      rejectLabel: "NO-GO",
+    },
+    result: null,
+    resolvedAt: null,
+    createdAt: new Date("2026-04-21T00:00:00.000Z"),
+    updatedAt: new Date("2026-04-21T00:00:00.000Z"),
+    ...overrides,
+  } as IssueThreadInteraction;
 }
 
 function createAttachment(overrides: Partial<IssueAttachment> & { id: string }): IssueAttachment {
@@ -928,6 +970,7 @@ describe("IssueDetail", () => {
 
     mockIssuesApi.list.mockResolvedValue([]);
     mockIssuesApi.listComments.mockResolvedValue([]);
+    mockIssuesApi.listInteractions.mockResolvedValue([]);
     mockIssuesApi.listAttachments.mockResolvedValue([]);
     mockIssuesApi.listWorkProducts.mockResolvedValue([]);
     mockIssuesApi.listFeedbackVotes.mockResolvedValue([]);
@@ -999,6 +1042,34 @@ describe("IssueDetail", () => {
         String(call[0]).includes("React has detected a change in the order of Hooks"),
       ),
     ).toBe(false);
+  });
+
+  it("renders pending GO/NO-GO confirmations near the top of the issue detail", async () => {
+    mockIssuesApi.get.mockResolvedValue(createIssue());
+    mockIssuesApi.listInteractions.mockResolvedValue([
+      createInteraction({ title: "Board GO needed" }),
+      createInteraction({
+        id: "interaction-answered",
+        title: "Resolved interaction",
+        status: "accepted",
+        result: { version: 1, outcome: "accepted" },
+      }),
+    ]);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <IssueDetail />
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitForAssertion(() => {
+      expect(container.textContent).toContain("GO/NO-GO");
+      expect(container.textContent).toContain("1 action required");
+      expect(container.textContent).toContain("Board GO needed");
+      expect(container.textContent).not.toContain("Resolved interaction");
+    });
   });
 
   it("does not mark the wake comment for the current live run as queued when active-run cache is stale", async () => {
@@ -2291,6 +2362,17 @@ describe("canBoardResolveRecoveryAction", () => {
         userId: "user-1",
       }),
     ).toBe(false);
+  });
+});
+
+describe("isPendingGoNoGoInteraction", () => {
+  it("matches only pending confirmation interactions", () => {
+    expect(isPendingGoNoGoInteraction(createInteraction())).toBe(true);
+    expect(isPendingGoNoGoInteraction(createInteraction({ status: "accepted" }))).toBe(false);
+    expect(isPendingGoNoGoInteraction(createInteraction({
+      kind: "ask_user_questions",
+      payload: { version: 1, questions: [] },
+    }))).toBe(false);
   });
 });
 

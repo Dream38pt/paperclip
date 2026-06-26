@@ -86,6 +86,7 @@ import { IssueRelatedWorkPanel } from "../components/IssueRelatedWorkPanel";
 import { IssueMonitorActivityCard } from "../components/IssueMonitorActivityCard";
 import { IssueScheduledRetryCard } from "../components/IssueScheduledRetryCard";
 import { IssueProperties } from "../components/IssueProperties";
+import { IssueThreadInteractionCard } from "../components/IssueThreadInteractionCard";
 import { PauseAffectsSummaryView } from "../components/interrupt-handoff/InterruptHandoffViews";
 import { computePauseAffectsSummary } from "../lib/interrupt-handoff";
 import { useIssueExternalObjects } from "../hooks/useIssueExternalObjects";
@@ -256,6 +257,82 @@ function treeControlPreviewErrorCopy(error: unknown): string {
     if (error.status === 422) return "This subtree action is currently invalid for the selected tasks.";
   }
   return error instanceof Error ? error.message : "Unable to load preview.";
+}
+
+export function isPendingGoNoGoInteraction(
+  interaction: IssueThreadInteraction,
+): interaction is RequestConfirmationInteraction | RequestCheckboxConfirmationInteraction {
+  return interaction.status === "pending" && (
+    interaction.kind === "request_confirmation" ||
+    interaction.kind === "request_checkbox_confirmation"
+  );
+}
+
+function IssueGoNoGoPanel({
+  interactions,
+  agentMap,
+  currentUserId,
+  userLabelMap,
+  externalReferences,
+  onAcceptInteraction,
+  onRejectInteraction,
+}: {
+  interactions: IssueThreadInteraction[];
+  agentMap: Map<string, Agent>;
+  currentUserId: string | null;
+  userLabelMap: ReadonlyMap<string, string> | null;
+  externalReferences?: MarkdownExternalReferenceMap;
+  onAcceptInteraction: (
+    interaction: RequestConfirmationInteraction | RequestCheckboxConfirmationInteraction,
+    selectedClientKeys?: string[],
+    selectedOptionIds?: string[],
+  ) => Promise<void>;
+  onRejectInteraction: (
+    interaction: RequestConfirmationInteraction | RequestCheckboxConfirmationInteraction,
+    reason?: string,
+  ) => Promise<void>;
+}) {
+  const pendingInteractions = interactions.filter(isPendingGoNoGoInteraction);
+  if (pendingInteractions.length === 0) return null;
+
+  return (
+    <section
+      className="sticky top-3 z-10 space-y-3 rounded-lg border border-amber-500/50 bg-background/95 p-3 shadow-sm backdrop-blur"
+      aria-label="GO/NO-GO actions"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300" aria-hidden="true" />
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold">GO/NO-GO</h3>
+            <p className="text-xs text-muted-foreground">
+              {pendingInteractions.length} action{pendingInteractions.length === 1 ? "" : "s"} required
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="space-y-3">
+        {pendingInteractions.map((interaction) => (
+          <IssueThreadInteractionCard
+            key={interaction.id}
+            interaction={interaction}
+            agentMap={agentMap}
+            currentUserId={currentUserId}
+            userLabelMap={userLabelMap}
+            externalReferences={externalReferences}
+            onAcceptInteraction={(item, selectedClientKeys, selectedOptionIds) => {
+              if (!isPendingGoNoGoInteraction(item)) return;
+              return onAcceptInteraction(item, selectedClientKeys, selectedOptionIds);
+            }}
+            onRejectInteraction={(item, reason) => {
+              if (!isPendingGoNoGoInteraction(item)) return;
+              return onRejectInteraction(item, reason);
+            }}
+          />
+        ))}
+      </div>
+    </section>
+  );
 }
 
 export function canBoardResolveRecoveryAction(
@@ -4196,6 +4273,16 @@ export function IssueDetail() {
       })()}
 
       <Separator />
+
+      <IssueGoNoGoPanel
+        interactions={interactions}
+        agentMap={agentMap}
+        currentUserId={currentUserId}
+        userLabelMap={userLabelMap}
+        externalReferences={externalObjectsState.isEnabled ? externalObjectsState.markdownReferences : undefined}
+        onAcceptInteraction={handleAcceptInteraction}
+        onRejectInteraction={handleRejectInteraction}
+      />
 
       <Tabs value={detailTab} onValueChange={setDetailTab} className="space-y-3">
         <TabsList variant="line" className="w-full justify-start gap-1">

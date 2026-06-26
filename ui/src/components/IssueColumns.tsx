@@ -136,6 +136,7 @@ export function IssueColumnPicker({
 export function InboxIssueMetaLeading({
   issue,
   isLive,
+  needsAction = false,
   subtreeLiveCount = 0,
   showStatus = true,
   showIdentifier = true,
@@ -144,6 +145,7 @@ export function InboxIssueMetaLeading({
 }: {
   issue: Issue;
   isLive: boolean;
+  needsAction?: boolean;
   subtreeLiveCount?: number;
   showStatus?: boolean;
   showIdentifier?: boolean;
@@ -167,6 +169,17 @@ export function InboxIssueMetaLeading({
           {issue.identifier ?? issue.id.slice(0, 8)}
         </span>
       ) : null}
+      {needsAction && (
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 sm:gap-1.5 sm:px-2",
+            "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+          )}
+        >
+          <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+          <span className="hidden text-[11px] font-medium sm:inline">Needs action</span>
+        </span>
+      )}
       {isLive && (
         <span
           className={cn(

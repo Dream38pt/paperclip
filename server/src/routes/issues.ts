@@ -2964,6 +2964,7 @@ export function issueRoutes(
     const sortField = req.query.sortField as string | undefined;
     const sortDir = req.query.sortDir as string | undefined;
     const hasPlanDocument = parseOptionalBooleanQuery(req.query.hasPlanDocument);
+    const hasPendingActionInteraction = parseOptionalBooleanQuery(req.query.hasPendingActionInteraction);
     const assigneeAgentFilterRaw = req.query.assigneeAgentId;
     let assigneeAgentId: string | null | undefined;
 
@@ -3005,6 +3006,10 @@ export function issueRoutes(
     }
     if (hasPlanDocument === null) {
       res.status(400).json({ error: "hasPlanDocument must be true or false when provided" });
+      return;
+    }
+    if (hasPendingActionInteraction === null) {
+      res.status(400).json({ error: "hasPendingActionInteraction must be true or false when provided" });
       return;
     }
     if (assigneeAgentFilterRaw !== undefined) {
@@ -3054,6 +3059,7 @@ export function issueRoutes(
       includeBlockedInboxAttention:
         req.query.includeBlockedInboxAttention === "true" || req.query.includeBlockedInboxAttention === "1",
       hasPlanDocument,
+      hasPendingActionInteraction,
       q: req.query.q as string | undefined,
       limit,
       offset,

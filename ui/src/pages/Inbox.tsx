@@ -121,6 +121,7 @@ import {
   getInboxSearchSupplementIssues,
   getLatestFailedRunsByAgent,
   matchesInboxIssueSearch,
+  mergeInboxIssuesById,
   getRecentTouchedIssues,
   isInboxEntityDismissed,
   isMineInboxTab,
@@ -841,6 +842,21 @@ export function Inbox() {
     refetchOnWindowFocus: false,
     staleTime: INBOX_HOT_PATH_STALE_MS,
   });
+  const {
+    data: needsActionIssuesRaw = [],
+    isLoading: isNeedsActionIssuesLoading,
+  } = useQuery({
+    queryKey: [...queryKeys.issues.list(selectedCompanyId!), "pending-action-interactions"],
+    queryFn: () =>
+      issuesApi.list(selectedCompanyId!, {
+        hasPendingActionInteraction: true,
+        includeRoutineExecutions: true,
+        limit: INBOX_ISSUE_LIST_LIMIT,
+      }),
+    enabled: !!selectedCompanyId,
+    refetchOnWindowFocus: false,
+    staleTime: INBOX_HOT_PATH_STALE_MS,
+  });
 
   const { data: heartbeatRuns, isLoading: isRunsLoading } = useQuery({
     queryKey: [...queryKeys.heartbeats(selectedCompanyId!), "limit", INBOX_HEARTBEAT_RUN_LIMIT],
@@ -872,7 +888,15 @@ export function Inbox() {
     [companyMembers?.users],
   );
 
-  const mineIssues = useMemo(() => getRecentTouchedIssues(mineIssuesRaw), [mineIssuesRaw]);
+  const needsActionIssues = useMemo(() => getRecentTouchedIssues(needsActionIssuesRaw), [needsActionIssuesRaw]);
+  const needsActionIssueIds = useMemo(
+    () => new Set(needsActionIssues.map((issue) => issue.id)),
+    [needsActionIssues],
+  );
+  const mineIssues = useMemo(
+    () => mergeInboxIssuesById(mineIssuesRaw, needsActionIssues),
+    [mineIssuesRaw, needsActionIssues],
+  );
   const touchedIssues = useMemo(() => getRecentTouchedIssues(touchedIssuesRaw), [touchedIssuesRaw]);
   const shouldUseIssueSearchSupplement =
     !!selectedCompanyId
@@ -895,9 +919,10 @@ export function Inbox() {
     const issueIds = new Set<string>();
     for (const issue of mineIssues) issueIds.add(issue.id);
     for (const issue of touchedIssues) issueIds.add(issue.id);
+    for (const issue of needsActionIssues) issueIds.add(issue.id);
     for (const issue of remoteIssueSearchResults) issueIds.add(issue.id);
     return [...issueIds];
-  }, [mineIssues, remoteIssueSearchResults, touchedIssues]);
+  }, [mineIssues, needsActionIssues, remoteIssueSearchResults, touchedIssues]);
   const {
     summaries: externalObjectSummaryByIssueId,
     isLoading: externalObjectSummariesLoading,
@@ -917,6 +942,10 @@ export function Inbox() {
   const visibleTouchedIssues = useMemo(
     () => applyIssueFilters(touchedIssues, issueFilters, currentUserId, true, liveIssueIds, issueFilterContext),
     [touchedIssues, issueFilters, currentUserId, liveIssueIds, issueFilterContext],
+  );
+  const visibleNeedsActionIssues = useMemo(
+    () => applyIssueFilters(needsActionIssues, issueFilters, currentUserId, true, liveIssueIds, issueFilterContext),
+    [needsActionIssues, issueFilters, currentUserId, liveIssueIds, issueFilterContext],
   );
   const unreadTouchedIssues = useMemo(
     () => visibleTouchedIssues.filter((issue) => issue.isUnreadForMe),
@@ -986,9 +1015,10 @@ export function Inbox() {
     () => {
       if (tab === "mine") return visibleMineIssues;
       if (tab === "unread") return unreadTouchedIssues;
+      if (tab === "all") return mergeInboxIssuesById(visibleTouchedIssues, visibleNeedsActionIssues);
       return visibleTouchedIssues;
     },
-    [tab, visibleMineIssues, visibleTouchedIssues, unreadTouchedIssues],
+    [tab, visibleMineIssues, visibleTouchedIssues, unreadTouchedIssues, visibleNeedsActionIssues],
   );
 
   const agentById = useMemo(() => {
@@ -1312,6 +1342,20 @@ export function Inbox() {
     () => groupedSections.reduce((count, group) => count + group.displayItems.length, 0),
     [groupedSections],
   );
+  const visibleNeedsActionCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const group of groupedSections) {
+      for (const item of group.displayItems) {
+        if (item.kind === "issue" && needsActionIssueIds.has(item.issue.id)) ids.add(item.issue.id);
+      }
+      for (const children of group.childrenByIssueId.values()) {
+        for (const child of children) {
+          if (needsActionIssueIds.has(child.id)) ids.add(child.id);
+        }
+      }
+    }
+    return ids.size;
+  }, [groupedSections, needsActionIssueIds]);
   const toggleInboxParentCollapse = useCallback((parentId: string) => {
     setCollapsedInboxParents((prev) => {
       const next = new Set(prev);
@@ -1967,7 +2011,8 @@ export function Inbox() {
     !isIssuesLoading &&
     !isMineIssuesLoading &&
     !isTouchedIssuesLoading &&
-    !isRunsLoading;
+    !isRunsLoading &&
+    !isNeedsActionIssuesLoading;
 
   const showSeparatorBefore = (key: SectionKey) => visibleSections.indexOf(key) > 0;
   const markAllReadIssues = (tab === "mine" ? visibleMineIssues : unreadTouchedIssues)
@@ -2010,53 +2055,63 @@ export function Inbox() {
           />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-        <Tabs value={tab} onValueChange={(value) => navigate(`/inbox/${value}`)}>
-          <PageTabBar
-            items={[
-              {
-                value: "mine",
-                label: "Mine",
-              },
-              {
-                value: "recent",
-                label: "Recent",
-              },
-              { value: "unread", label: "Unread" },
-              { value: "blocked", label: "Blocked" },
-              { value: "all", label: "All" },
-            ]}
-          />
-        </Tabs>
-
-        <div className="flex items-center gap-2">
-          <div className="relative hidden sm:block">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Search inbox…"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (shouldBlurPageSearchOnEnter({
-                  key: e.key,
-                  isComposing: e.nativeEvent.isComposing,
-                })) {
-                  e.currentTarget.blur();
-                  return;
-                }
-
-                if (shouldBlurPageSearchOnEscape({
-                  key: e.key,
-                  isComposing: e.nativeEvent.isComposing,
-                  currentValue: e.currentTarget.value,
-                })) {
-                  e.currentTarget.blur();
-                }
-              }}
-              className="h-8 w-[220px] pl-8 text-xs"
-              data-page-search-target="true"
+          <Tabs value={tab} onValueChange={(value) => navigate(`/inbox/${value}`)}>
+            <PageTabBar
+              items={[
+                {
+                  value: "mine",
+                  label: "Mine",
+                },
+                {
+                  value: "recent",
+                  label: "Recent",
+                },
+                { value: "unread", label: "Unread" },
+                { value: "blocked", label: "Blocked" },
+                { value: "all", label: "All" },
+              ]}
             />
-          </div>
+          </Tabs>
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {visibleNeedsActionCount > 0 ? (
+              <span className="inline-flex h-8 items-center rounded-md bg-amber-500/10 px-2.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                {visibleNeedsActionCount} action{visibleNeedsActionCount === 1 ? "" : "s"} required
+              </span>
+            ) : null}
+            {liveIssueIds.size > 0 ? (
+              <span className="inline-flex h-8 items-center rounded-md bg-blue-500/10 px-2.5 text-xs font-medium text-blue-700 dark:text-blue-300">
+                {liveIssueIds.size} live
+              </span>
+            ) : null}
+            <div className="relative hidden sm:block">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Search inbox…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (shouldBlurPageSearchOnEnter({
+                    key: e.key,
+                    isComposing: e.nativeEvent.isComposing,
+                  })) {
+                    e.currentTarget.blur();
+                    return;
+                  }
+
+                  if (shouldBlurPageSearchOnEscape({
+                    key: e.key,
+                    isComposing: e.nativeEvent.isComposing,
+                    currentValue: e.currentTarget.value,
+                  })) {
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="h-8 w-[220px] pl-8 text-xs"
+                data-page-search-target="true"
+              />
+            </div>
           {tab === "blocked" ? (
             <>
               <IssueFiltersPopover
@@ -2408,6 +2463,7 @@ export function Inbox() {
                           <InboxIssueMetaLeading
                             issue={issue}
                             isLive={liveIssueIds.has(issue.id)}
+                            needsAction={needsActionIssueIds.has(issue.id)}
                             subtreeLiveCount={subtreeLiveCounts.get(issue.id) ?? 0}
                             showStatus={visibleIssueColumnSet.has("status") && availableIssueColumnSet.has("status")}
                             showIdentifier={visibleIssueColumnSet.has("id") && availableIssueColumnSet.has("id")}
