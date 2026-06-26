@@ -112,7 +112,11 @@ test("release package json applies publishConfig entrypoints and rewrites worksp
       main: "./dist/index.js",
       types: "./dist/index.d.ts",
     },
-    dependencies: { "@paperclipai/shared": "workspace:*" },
+    dependencies: {
+      "@paperclipai/shared": "workspace:*",
+      "@paperclipai/adapter-utils": "2026.618.1-p4b.1",
+      zod: "^3.24.2",
+    },
   }, "2026.618.1-p4b.2");
 
   assert.equal(result.version, "2026.618.1-p4b.2");
@@ -120,7 +124,11 @@ test("release package json applies publishConfig entrypoints and rewrites worksp
   assert.equal(result.main, "./dist/index.js");
   assert.equal(result.types, "./dist/index.d.ts");
   assert.deepEqual(result.publishConfig, { access: "public" });
-  assert.deepEqual(result.dependencies, { "@paperclipai/shared": "2026.618.1-p4b.2" });
+  assert.deepEqual(result.dependencies, {
+    "@paperclipai/shared": "2026.618.1-p4b.2",
+    "@paperclipai/adapter-utils": "2026.618.1-p4b.2",
+    zod: "^3.24.2",
+  });
 });
 
 test("the live release manifest has no unpublishable workspace edges", () => {

@@ -220,7 +220,8 @@ function replaceWorkspaceDeps(deps, version) {
 
   for (const [name, value] of Object.entries(next)) {
     if (!name.startsWith("@paperclipai/")) continue;
-    if (typeof value !== "string" || !value.startsWith("workspace:")) continue;
+    if (typeof value !== "string") continue;
+    if (!value.startsWith("workspace:") && !/^\d{4}\.\d+\.\d+/.test(value)) continue;
     next[name] = version;
   }
 
