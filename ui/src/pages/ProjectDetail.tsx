@@ -248,7 +248,7 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
 
   const { data: issues, isLoading, error } = useQuery({
     queryKey: queryKeys.issues.listByProject(companyId, projectId),
-    queryFn: () => issuesApi.list(companyId, { projectId }),
+    queryFn: () => issuesApi.list(companyId, { projectId, includeBlockedInboxAttention: true }),
     enabled: !!companyId,
   });
 
@@ -308,7 +308,7 @@ function ProjectPluginOperationsList({
 
   const { data: issues, isLoading, error } = useQuery({
     queryKey: queryKeys.issues.listPluginOperationsByProject(companyId, projectId, originKindPrefix),
-    queryFn: () => issuesApi.list(companyId, { projectId, originKindPrefix }),
+    queryFn: () => issuesApi.list(companyId, { projectId, originKindPrefix, includeBlockedInboxAttention: true }),
     enabled: !!companyId && !!projectId,
   });
 
@@ -412,7 +412,7 @@ export function ProjectDetail() {
     queryKey: workspaceTabProjectId && resolvedCompanyId
       ? queryKeys.issues.listByProject(resolvedCompanyId, workspaceTabProjectId)
       : ["issues", "__workspace-tab__", "disabled"],
-    queryFn: () => issuesApi.list(resolvedCompanyId!, { projectId: workspaceTabProjectId! }),
+    queryFn: () => issuesApi.list(resolvedCompanyId!, { projectId: workspaceTabProjectId!, includeBlockedInboxAttention: true }),
     enabled: Boolean(resolvedCompanyId && workspaceTabProjectId && isolatedWorkspacesEnabled),
   });
   const {

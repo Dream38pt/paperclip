@@ -270,7 +270,7 @@ export function Routines() {
   });
   const { data: routineExecutionIssues, isLoading: recentRunsLoading, error: recentRunsError } = useQuery({
     queryKey: [...queryKeys.issues.list(selectedCompanyId!), "routine-executions"],
-    queryFn: () => issuesApi.list(selectedCompanyId!, { originKind: "routine_execution" }),
+    queryFn: () => issuesApi.list(selectedCompanyId!, { originKind: "routine_execution", includeBlockedInboxAttention: true }),
     enabled: !!selectedCompanyId && activeTab === "runs",
   });
   const { data: liveRuns } = useQuery({

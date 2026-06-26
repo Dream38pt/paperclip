@@ -13,6 +13,7 @@ import {
   RECOVERY_CHIP_DEFAULT_TONE,
   recoveryChipLabel,
 } from "../lib/recovery-display";
+import { getIssueAttentionState, type IssueAttentionState } from "../lib/issueAttention";
 import { StatusIcon } from "./StatusIcon";
 import { productivityReviewTriggerLabel } from "./ProductivityReviewBadge";
 import { hasAssignedBacklogBlocker } from "../lib/issue-blockers";
@@ -98,6 +99,8 @@ export function IssueRow({
   ) : null;
   const recoveryAction = issue.activeRecoveryAction ?? null;
   const recoveryIndicator = recoveryAction ? renderRecoveryChip(recoveryAction, selected) : null;
+  const attentionState = getIssueAttentionState(issue);
+  const attentionIndicator = attentionState ? renderIssueAttentionChip(attentionState, selected) : null;
   const parkedBlockerIndicator = hasAssignedBacklogBlocker(issue.blockedBy) ? (
     <span
       data-testid="issue-row-parked-blocker"
@@ -129,6 +132,7 @@ export function IssueRow({
       <span className="flex shrink-0 items-center gap-1 pt-px sm:hidden">
         {mobileLeading ?? <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} size="lg" className={selectedStatusClass} />}
         {productivityReviewIndicator}
+        {attentionIndicator}
         {parkedBlockerIndicator}
         {recoveryIndicator}
       </span>
@@ -155,6 +159,7 @@ export function IssueRow({
               <span className="shrink-0 font-mono text-xs text-muted-foreground">
                 {identifier}
               </span>
+              {attentionIndicator}
               {parkedBlockerIndicator}
               {recoveryIndicator}
             </>
@@ -240,6 +245,41 @@ export function IssueRow({
       ) : null}
     </Link>
   );
+}
+
+function renderIssueAttentionChip(state: IssueAttentionState, selected: boolean) {
+  const toneClass = selected
+    ? "border-muted-foreground/50 bg-muted/40 text-muted-foreground"
+    : issueAttentionToneClass(state.tone);
+
+  return (
+    <span
+      data-testid="issue-attention-chip"
+      data-attention-kind={state.kind}
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium leading-tight",
+        toneClass,
+      )}
+      title={state.description}
+      aria-label={`${state.label}: ${state.description}`}
+    >
+      {state.label}
+    </span>
+  );
+}
+
+function issueAttentionToneClass(tone: IssueAttentionState["tone"]) {
+  switch (tone) {
+    case "red":
+      return "border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-300";
+    case "orange":
+      return "border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300";
+    case "blue":
+      return "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300";
+    case "amber":
+    default:
+      return "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
 }
 
 function renderRecoveryChip(action: IssueRecoveryAction, selected: boolean): ReactNode {
